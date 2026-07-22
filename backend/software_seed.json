@@ -1,0 +1,317 @@
+[
+  {
+    "package_name": "ABSurvTDC",
+    "reference": "Ghosh, H., Das, S., Yeasin, M., & Paul, A. K. (2023). ABSurvTDC: Survival Analysis using Time Dependent Covariate for Animal Breeding. Retrieved from https://cran.r-project.org/package=ABSurvTDC",
+    "year": "2023",
+    "downloads": "10667",
+    "cran_url": "https://cran.r-project.org/package=ABSurvTDC"
+  },
+  {
+    "package_name": "BaseTempSeed",
+    "reference": "Ghosh, H., Das, S., Yeasin, M., & Paul, A. K. (2023). BaseTempSeed: Estimation of Seed Germination Base Temperature in Thermal Modelling. Retrieved from https://CRAN.R-project.org/package=BaseTempSeed",
+    "year": "2023",
+    "downloads": "23286",
+    "cran_url": "https://CRAN.R-project.org/package=BaseTempSeed"
+  },
+  {
+    "package_name": "CDVI",
+    "reference": "Shankar, S. V., Paul, R. K., Yeasin, M., & Roy, H. S. (2024). CDVI: Cuddy-Della Valle Index for Capturing the Instability in Time Series Data. Retrieved from https://cran.r-project.org/package=CDVI",
+    "year": "2024",
+    "downloads": "5354",
+    "cran_url": "https://cran.r-project.org/package=CDVI"
+  },
+  {
+    "package_name": "CEEMDANML",
+    "reference": "Garai, S., Paul, R. K., & Yeasin, M. (2023). CEEMDANML: CEEMDAN Decomposition Based Hybrid Machine Learning Models. Retrieved from https://CRAN.R-project.org/package=CEEMDANML",
+    "year": "2023",
+    "downloads": "8748",
+    "cran_url": "https://CRAN.R-project.org/package=CEEMDANML"
+  },
+  {
+    "package_name": "CGR",
+    "reference": "Shankar, S. V., Paul, R. K., Roy, H. S., & Yeasin, M. (2024). CGR: Compound Growth Rate for Capturing the Growth Rate Over the Period. Retrieved from https://cran.r-project.org/package=CGR",
+    "year": "2024",
+    "downloads": "5393",
+    "cran_url": "https://cran.r-project.org/package=CGR"
+  },
+  {
+    "package_name": "CREDS",
+    "reference": "Islam, S., Yeasin, M., Muruganandam, M., & Madhu, M. (2022). CREDS: Calibrated Ratio Estimator under Double Sampling Design. Retrieved from https://CRAN.R-project.org/package=CREDS",
+    "year": "2022",
+    "downloads": "7116",
+    "cran_url": "https://CRAN.R-project.org/package=CREDS"
+  },
+  {
+    "package_name": "DNAmotif",
+    "reference": "Ghosh, S., Angadi, U. B., Yeasin, M., Sinha, D., Das, S., & Iquebal, M. A. (2024). DNAmotif: DNA Sequence Motifs. Retrieved from https://cran.r-project.org/package=DNAmotif",
+    "year": "2024",
+    "downloads": "5250",
+    "cran_url": "https://cran.r-project.org/package=DNAmotif"
+  },
+  {
+    "package_name": "DWaveNARDL",
+    "reference": "Yeasin, M., Paul, R. K., Upadhyay, R. K., Sarkar, A., & Paul, A. K. (2025). DWaveNARDL: Dual Wavelet Based NARDL Model. Retrieved from https://CRAN.R-project.org/package=DWaveNARDL",
+    "year": "2025",
+    "downloads": "1851",
+    "cran_url": "https://CRAN.R-project.org/package=DWaveNARDL"
+  },
+  {
+    "package_name": "EEML",
+    "reference": "Yeasin, M., Paul, R. K., & Haldar, D. (2024). EEML: Ensemble Explainable Machine Learning Models. Retrieved from https://CRAN.R-project.org/package=EEML",
+    "year": "2024",
+    "downloads": "5153",
+    "cran_url": "https://CRAN.R-project.org/package=EEML"
+  },
+  {
+    "package_name": "EpiSemble",
+    "reference": "Sinha, D., Archak, S., Mishra, D. C., Dasmandal, T., & Yeasin, M. (2023). EpiSemble: Ensemble Based Machine Learning Approach for Predicting Methylation States. Retrieved from https://cran.r-project.org/package=EpiSemble",
+    "year": "2023",
+    "downloads": "8105",
+    "cran_url": "https://cran.r-project.org/package=EpiSemble"
+  },
+  {
+    "package_name": "EstHTSeed",
+    "reference": "Ghosh, H., Rakshit, D., Yeasin, M., & Das, S. (2026). EstHTSeed: Hydro time analysis of seed germination (R package version 0.1.0). https://CRAN.R-project.org/package=EstHTSeed",
+    "year": "2026",
+    "downloads": "733",
+    "cran_url": "https://CRAN.R-project.org/package=EstHTSeed"
+  },
+  {
+    "package_name": "ExtendedABSurvTDC",
+    "reference": "Ghosh, H., Das, S., Yeasin, M., & Rakshit, D. (2025). ExtendedABSurvTDC: Survival Analysis using Indicators under Time Dependent Covariates. Retrieved from https://cran.r-project.org/package=ExtendedABSurvTDC",
+    "year": "",
+    "downloads": "1145",
+    "cran_url": "https://cran.r-project.org/package=ExtendedABSurvTDC"
+  },
+  {
+    "package_name": "GB5mcPred",
+    "reference": "Sinha, D., Archak, S., Mishra, D. C., Dasmandal, T., & Yeasin, M. (2023). GB5mcPred: Gradient Boosting Algorithm for Predicting Methylation States. Retrieved from https://cran.r-project.org/package=GB5mcPred",
+    "year": "2023",
+    "downloads": "5942",
+    "cran_url": "https://cran.r-project.org/package=GB5mcPred"
+  },
+  {
+    "package_name": "GenePopStats",
+    "reference": "Sarkar, A., Mishra, D. C., Sinha, D., Das, S., Chaturvedi, K. K., Lal, S. B., Kumar, S., Paul, R. K., Jha, G. K., Budhlakoti, N., & Yeasin, M. (2025). GenePopStats: Population genetics statistics for selective sweep. Retrieved from https://cran.r-project.org/package=GenePopStats",
+    "year": "",
+    "downloads": "3287",
+    "cran_url": "https://cran.r-project.org/package=GenePopStats"
+  },
+  {
+    "package_name": "ICompELM",
+    "reference": "Das, S., Paul, R. K., Yeasin, M., & Paul, A. K. (2024). ICompELM: Independent Component Analysis Based Extreme Learning Machine. Retrieved from https://CRAN.R-project.org/package=ICompELM",
+    "year": "2024",
+    "downloads": "11379",
+    "cran_url": "https://CRAN.R-project.org/package=ICompELM"
+  },
+  {
+    "package_name": "ImCluster",
+    "reference": "Jeelani, M. I., Jeelani, F., Mir, S. A., Maqbool, S., Geelani, S. N., & Yeasin, M. (2023). ImCluster: Efficiency of Cluster Sampling for Crop Surveys. Retrieved from https://cran.r-project.org/package=ImCluster",
+    "year": "2023",
+    "downloads": "4661",
+    "cran_url": "https://cran.r-project.org/package=ImCluster"
+  },
+  {
+    "package_name": "ImFoR",
+    "reference": "Jeelani, M. I., Jeelani, F., Mir, S. A., Maqbool, S., Geelani, S. N., Lone, M. A., Tabassum, A., Islam, K. U., Rashid, I., & Yeasin, M. (2023). ImFoR: Non-Linear Height Diameter Models for Forestry. Retrieved from https://cran.r-project.org/package=ImFoR",
+    "year": "2023",
+    "downloads": "5493",
+    "cran_url": "https://cran.r-project.org/package=ImFoR"
+  },
+  {
+    "package_name": "ImHD",
+    "reference": "Jeelani, M. I., Jeelani, F., Mir, S. A., Geelani, S. N., Lone, M. A., Ali, A., Mushtaq, T., Bhat, A., & Yeasin, M. (2023). ImHD: Artificial Intelligence Based Machine Learning Algorithms for Height Diameter Relationships of Conifer Trees. Retrieved from https://cran.r-project.org/package=ImHD",
+    "year": "2023",
+    "downloads": "4574",
+    "cran_url": "https://cran.r-project.org/package=ImHD"
+  },
+  {
+    "package_name": "ImNN",
+    "reference": "Jeelani, M. I., Jeelani, F., Mir, S. A., Geelani, S. N., Lone, M. A., Pala, N. A., Danish, F., Tabassum, A., Islam, K. U., Rashid, I., & Yeasin, M. (2023). ImNN: Neural Networks for Predicting Volume of Forest Trees. Retrieved from https://cran.r-project.org/package=ImNN",
+    "year": "2023",
+    "downloads": "5054",
+    "cran_url": "https://cran.r-project.org/package=ImNN"
+  },
+  {
+    "package_name": "ImVol",
+    "reference": "Jeelani, M. I., Jeelani, F., Geelani, S. N., & Yeasin, M. (2023). ImVol: Volume Prediction of Trees Using Linear and Nonlinear Allometric Equations. Retrieved from https://CRAN.R-project.org/package=ImVol",
+    "year": "2023",
+    "downloads": "4914",
+    "cran_url": "https://CRAN.R-project.org/package=ImVol"
+  },
+  {
+    "package_name": "InterNL",
+    "reference": "Paul, A. K., Yeasin, M., Paul, R. K., Biswas, S., Roy, H. S., & Kumar, P. (2024). InterNL: Time Series Intervention Model Using Non-Linear Function. Retrieved from https://cran.r-project.org/package=InterNL",
+    "year": "2024",
+    "downloads": "3707",
+    "cran_url": "https://cran.r-project.org/package=InterNL"
+  },
+  {
+    "package_name": "metaCluster",
+    "reference": "Sinha, D., Guha Majumdar, S., Sharma, A., Mishra, D. C., & Yeasin, M. (2024). metaCluster: Metagenomic Clustering. Retrieved from https://cran.r-project.org/package=metaCluster",
+    "year": "2024",
+    "downloads": "12296",
+    "cran_url": "https://cran.r-project.org/package=metaCluster"
+  },
+  {
+    "package_name": "NPStability",
+    "reference": "Kumar, P., Roy, H. S., Paul, R. K., Yeasin, M., Yadav, S. K., & Paul, A. K. (2026). NPStability: Rank-based stability index (RSI) for genotype by environment studies (R package version 0.1.0). https://CRAN.R-project.org/package=NPStability",
+    "year": "2026",
+    "downloads": "1432",
+    "cran_url": "https://CRAN.R-project.org/package=NPStability"
+  },
+  {
+    "package_name": "OpEnCAST",
+    "reference": "Sarkar, A., Sinha, D., Murmu, S., Yeasin, M., Mishra, D. C., & Archak, S. (2026). OpEnCAST: Optimized ensemble model for C and A methylation search in plant (R package version 0.1.1). https://CRAN.R-project.org/package=OpEnCAST",
+    "year": "2026",
+    "downloads": "1596",
+    "cran_url": "https://CRAN.R-project.org/package=OpEnCAST"
+  },
+  {
+    "package_name": "OpEnHiMR",
+    "reference": "Sinha, D., Murmu, S., Jha, G. K., Yeasin, M., Das, S., Bhattacharjee, S., Mishra, D. C., Budhlakoti, N., Srivastava, S., & Archak, S. (2024). OpEnHiMR: Optimization Based Ensemble Model for Prediction of Histone Modifications in Rice. Retrieved from https://cran.r-project.org/package=OpEnHiMR",
+    "year": "2024",
+    "downloads": "11702",
+    "cran_url": "https://cran.r-project.org/package=OpEnHiMR"
+  },
+  {
+    "package_name": "OptiSembleForecasting",
+    "reference": "Yeasin, M., & Paul, R. K. (2022). OptiSembleForecasting: Optimization Based Ensemble Forecasting Using MCS Algorithm. Retrieved from https://CRAN.R-project.org/package=OptiSembleForecasting",
+    "year": "2022",
+    "downloads": "5239",
+    "cran_url": "https://CRAN.R-project.org/package=OptiSembleForecasting"
+  },
+  {
+    "package_name": "PMEvapotranspiration",
+    "reference": "Roy, H. S., Paul, R. K., Yeasin, M., & Kumar, A. (2024). PMEvapotranspiration: Calculation of the Penman-Monteith Evapotranspiration using Weather Variables. Retrieved from https://cran.r-project.org/package=PMEvapotranspiration",
+    "year": "2024",
+    "downloads": "4997",
+    "cran_url": "https://cran.r-project.org/package=PMEvapotranspiration"
+  },
+  {
+    "package_name": "PWEV",
+    "reference": "Singh, A. K., Paul, R. K., Paul, A. K., Yeasin, M., & Sarkar, A. (2024). PWEV: PSO Based Weighted Ensemble Algorithm for Volatility Modelling. Retrieved from https://cran.r-project.org/package=PWEV",
+    "year": "2024",
+    "downloads": "3723",
+    "cran_url": "https://cran.r-project.org/package=PWEV"
+  },
+  {
+    "package_name": "SQI",
+    "reference": "Wani, O. A., Nazir, F., Mahdi, S. S., Bangroo, S., Malik, A. R., Dar, S. R., & Yeasin, M. (2023). SQI: Soil Quality Index. Retrieved from https://cran.r-project.org/package=SQI",
+    "year": "2023",
+    "downloads": "6806",
+    "cran_url": "https://cran.r-project.org/package=SQI"
+  },
+  {
+    "package_name": "SweepDiscovery",
+    "reference": "Sarkar, A., Mishra, D. C., Sinha, D., Das, S., & Yeasin, M. (2023). SweepDiscovery: Selective Sweep Discovery Tool. Retrieved from https://cran.r-project.org/package=SweepDiscovery",
+    "year": "2023",
+    "downloads": "4075",
+    "cran_url": "https://cran.r-project.org/package=SweepDiscovery"
+  },
+  {
+    "package_name": "TSANN",
+    "reference": "Yeasin, M., Paul, R. K., & Sinha, D. (2021). TSANN: Time Series Artificial Neural Network. Retrieved from https://CRAN.R-project.org/package=TSANN",
+    "year": "2021",
+    "downloads": "12990",
+    "cran_url": "https://CRAN.R-project.org/package=TSANN"
+  },
+  {
+    "package_name": "TSLSTM",
+    "reference": "Paul, R. K., & Yeasin, M. (2022). TSLSTM: Long Short Term Memory (LSTM) Model for Time Series Forecasting. Retrieved from https://CRAN.R-project.org/package=TSLSTM",
+    "year": "2022",
+    "downloads": "15356",
+    "cran_url": "https://CRAN.R-project.org/package=TSLSTM"
+  },
+  {
+    "package_name": "UEI",
+    "reference": "Singh, A. K., Paul, R. K., Yeasin, M., Sarkar, A., & Sarkar, A. (2024). UEI: Compute Uniform Error Index. Retrieved from https://cran.r-project.org/package=UEI",
+    "year": "2024",
+    "downloads": "2921",
+    "cran_url": "https://cran.r-project.org/package=UEI"
+  },
+  {
+    "package_name": "VIRF",
+    "reference": "Paul, R. K., Yeasin, M., & Tanwar, A. (2025). VIRF: Computation of volatility impulse response function of multivariate time series. Retrieved from https://cran.r-project.org/package=VIRF",
+    "year": "",
+    "downloads": "150499",
+    "cran_url": "https://cran.r-project.org/package=VIRF"
+  },
+  {
+    "package_name": "WaveletANN",
+    "reference": "Paul, R. K., & Yeasin, M. (2022). WaveletANN: Wavelet ANN Model. Retrieved from https://CRAN.R-project.org/package=WaveletANN",
+    "year": "2022",
+    "downloads": "22518",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletANN"
+  },
+  {
+    "package_name": "WaveletArima",
+    "reference": "Paul, R. K., Samanta, S., & Yeasin, M. (2022). WaveletArima: Wavelet-ARIMA Model for Time Series Forecasting. Retrieved from https://CRAN.R-project.org/package=WaveletArima",
+    "year": "2022",
+    "downloads": "29413",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletArima"
+  },
+  {
+    "package_name": "WaveletETS",
+    "reference": "Paul, R. K., & Yeasin, M. (2023). WaveletETS: Wavelet Based Error Trend Seasonality Model. Retrieved from https://CRAN.R-project.org/package=WaveletETS",
+    "year": "2023",
+    "downloads": "5546",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletETS"
+  },
+  {
+    "package_name": "WaveletGBM",
+    "reference": "Paul, R. K., & Yeasin, M. (2023). WaveletGBM: Wavelet Based Gradient Boosting Method. Retrieved from https://CRAN.R-project.org/package=WaveletGBM",
+    "year": "2023",
+    "downloads": "6525",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletGBM"
+  },
+  {
+    "package_name": "WaveletKNN",
+    "reference": "Paul, R. K., & Yeasin, M. (2023). WaveletKNN: Wavelet Based K-Nearest Neighbor Model. Retrieved from https://CRAN.R-project.org/package=WaveletKNN",
+    "year": "2023",
+    "downloads": "5512",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletKNN"
+  },
+  {
+    "package_name": "WaveletLSTM",
+    "reference": "Paul, R. K., & Yeasin, M. (2023). WaveletLSTM: Wavelet Based LSTM Model. Retrieved from https://CRAN.R-project.org/package=WaveletLSTM",
+    "year": "2023",
+    "downloads": "6748",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletLSTM"
+  },
+  {
+    "package_name": "WaveletML",
+    "reference": "Garai, S., Paul, R. K., & Yeasin, M. (2023). WaveletML: Wavelet Decomposition Based Hybrid Machine Learning Models. Retrieved from https://CRAN.R-project.org/package=WaveletML",
+    "year": "2023",
+    "downloads": "5712",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletML"
+  },
+  {
+    "package_name": "WaveletRF",
+    "reference": "Paul, R. K., & Yeasin, M. (2022). WaveletRF: Wavelet-RF Hybrid Model for Time Series Forecasting. Retrieved from https://CRAN.R-project.org/package=WaveletRF",
+    "year": "2022",
+    "downloads": "8480",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletRF"
+  },
+  {
+    "package_name": "WaveletSVR",
+    "reference": "Paul, R. K., & Yeasin, M. (2022). WaveletSVR: Wavelet-SVR Hybrid Model for Time Series Forecasting. Retrieved from https://CRAN.R-project.org/package=WaveletSVR",
+    "year": "2022",
+    "downloads": "7920",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletSVR"
+  },
+  {
+    "package_name": "WaveST",
+    "reference": "Yeasin, M., Paul, R. K., & Singh, A. K. (2026). WaveST: Wavelet-based spatial time series models (R package version 0.1.0). https://CRAN.R-project.org/package=WaveST",
+    "year": "2026",
+    "downloads": "543",
+    "cran_url": "https://CRAN.R-project.org/package=WaveST"
+  },
+  {
+    "package_name": "WeightedEnsemble",
+    "reference": "Paul, R. K., & Yeasin, M. (2023). WeightedEnsemble: Weighted Ensemble for Hybrid Model. Retrieved from https://CRAN.R-project.org/package=WeightedEnsemble",
+    "year": "2023",
+    "downloads": "9533",
+    "cran_url": "https://CRAN.R-project.org/package=WeightedEnsemble"
+  }
+]

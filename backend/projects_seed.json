@@ -1,0 +1,50 @@
+[
+  {
+    "sl_no": "1",
+    "investigators": "Md Yeasin, Ranjit Kumar Paul",
+    "project_title": "An effective approach for combining time series and deep learning models",
+    "funding_agency": "ICAR-IASRI",
+    "date_start": "25.11.2021",
+    "status": "Completed"
+  },
+  {
+    "sl_no": "2",
+    "investigators": "Ranjit Kumar Paul, Md Yeasin, A. K. Paul, Ajit",
+    "project_title": "Production system agribusiness and institutions” Component 3: “Market Information System.",
+    "funding_agency": "NAIP",
+    "date_start": "22.01.2022",
+    "status": "Ongoing"
+  },
+  {
+    "sl_no": "3",
+    "investigators": "Md Yeasin, Ranjit Kumar Paul, Ajit, Dipanwita Haldar",
+    "project_title": "Forest cover trend and above ground biomass estimation using advanced statistical techniques based on remote sensing data",
+    "funding_agency": "ICAR-IASRI",
+    "date_start": "27.10.2022",
+    "status": "Ongoing"
+  },
+  {
+    "sl_no": "4",
+    "investigators": "HS Roy ,Ranjit Kumar Paul, Md Yeasin,  and P Kumar",
+    "project_title": "An AI-based approach for modelling evapotranspiration using remote sensing observations",
+    "funding_agency": "ICAR-IASRI",
+    "date_start": "14.11.2023",
+    "status": "Ongoing"
+  },
+  {
+    "sl_no": "5",
+    "investigators": "Ranjit Kumar Paul, Md Yeasin, HS Roy and P Kumar",
+    "project_title": "Development of AI enabled models and web solution for prediction of crop yield",
+    "funding_agency": "DST",
+    "date_start": "01.10.2024",
+    "status": "Ongoing"
+  },
+  {
+    "sl_no": "6",
+    "investigators": "Anindita Datta. Mohd Harun, Cini Varghese and Md Yeasin (Co-PI)",
+    "project_title": "Designs for factor prioritization and Machine Learning (ML) Techniques: An integrative approach",
+    "funding_agency": "ICAR-IASRI",
+    "date_start": "16.05.25",
+    "status": "15.05.28"
+  }
+]
