@@ -517,12 +517,14 @@ def login():
 
     otp = generate_otp()
     OTP_STORE[email] = {"otp": otp, "expires": time.time() + OTP_TTL_SECONDS}
-    delivered = send_otp_email(email, otp)
+    try:
+        delivered = send_otp_email(email, otp)
+    except Exception as e:
+        print(f"[SMTP ERROR] Failed to send OTP email: {e}")
+        delivered = False
 
     resp = {"message": "OTP sent to your registered email."}
     if not delivered:
-        # DEV MODE ONLY: expose the OTP directly since no SMTP is configured.
-        # Remove this in production once real email delivery is set up.
         resp["dev_otp"] = otp
     return jsonify(resp)
 
