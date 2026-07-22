@@ -496,7 +496,7 @@ def send_otp_email(email: str, otp: str):
     msg["Subject"] = "Your Admin Login OTP"
     msg["From"] = os.environ.get("SMTP_USER")
     msg["To"] = email
-    with smtplib.SMTP(smtp_host, int(os.environ.get("SMTP_PORT", 587))) as server:
+    with smtplib.SMTP(smtp_host, int(os.environ.get("SMTP_PORT", 587)), timeout=8) as server:
         server.starttls()
         server.login(os.environ.get("SMTP_USER"), os.environ.get("SMTP_PASSWORD"))
         server.send_message(msg)
