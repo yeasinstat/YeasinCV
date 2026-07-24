@@ -32,26 +32,11 @@ body {
 /* ---------------- Top bar ---------------- */
 .topbar {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   padding: 18px 32px;
   border-bottom: 1px solid var(--line);
   background: var(--paper-raised);
-}
-
-.brand { display: flex; align-items: baseline; gap: 10px; }
-.brand-mark {
-  font-family: var(--font-serif);
-  font-weight: 700;
-  font-size: 1.25rem;
-  letter-spacing: 0.04em;
-  color: var(--olive-dark);
-}
-.brand-sub {
-  font-size: 0.78rem;
-  color: var(--slate);
-  border-left: 1px solid var(--line);
-  padding-left: 10px;
 }
 
 .scientist-card {
@@ -100,7 +85,8 @@ body {
 main { max-width: 1080px; margin: 0 auto; padding: 0 32px 80px; }
 
 .hero { padding: 46px 0 20px; border-bottom: 1px solid var(--line); }
-.hero h1 {
+.hero-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.hero h2 {
   font-family: var(--font-serif);
   font-size: 2.4rem;
   font-weight: 600;
@@ -476,8 +462,29 @@ main { max-width: 1080px; margin: 0 auto; padding: 0 32px 80px; }
 
 /* ---------------- Hidden-paper badge ---------------- */
 .tag-hidden { background: #F3E1DB; color: var(--brick); }
+.tag-naas { background: #EEF0DE; color: var(--q2); }
 
 .modal-hint-tight { margin-top: 6px; }
+
+.cv-bulk-actions { display: flex; gap: 8px; margin: 14px 0; }
+
+.cv-sections { max-height: 50vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; }
+.cv-section { border-bottom: 1px solid var(--line); }
+.cv-section:last-child { border-bottom: none; }
+.cv-section-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; background: #F3F0E6; cursor: pointer;
+  font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--olive-dark);
+}
+.cv-item-list { padding: 4px 12px; }
+.cv-item-option {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 6px 0; font-size: 0.82rem; color: var(--ink);
+  border-bottom: 1px dotted var(--line);
+}
+.cv-item-option:last-child { border-bottom: none; }
+.cv-item-option input { margin: 0; flex-shrink: 0; }
+.cv-item-meta { color: var(--slate); font-size: 0.76rem; }
 
 @media (max-width: 720px) {
   .topbar { flex-direction: column; align-items: flex-start; gap: 12px; }

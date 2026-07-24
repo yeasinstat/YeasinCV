@@ -11,69 +11,23 @@
 <body>
 
 <header class="topbar">
-  <div class="brand">
-    <span class="brand-mark">ARIMS</span>
-    <span class="brand-sub">Academic Research Information Management System</span>
-  </div>
-
   <div class="scientist-card" id="scientistCard">
     <div class="scientist-text">
       <div class="scientist-name">Dr. Md Yeasin</div>
       <div class="scientist-role">Scientist &middot; ICAR-IASRI, New Delhi</div>
     </div>
-    <button class="btn-ghost hidden" id="uploadScoresBtn">Upload Journal Scores</button>
+    <button class="btn-ghost hidden" id="downloadCvBtn">Download CV</button>
+    <button class="btn-ghost hidden" id="uploadNaasBtn">Upload NAAS Scores</button>
+    <button class="btn-ghost hidden" id="uploadJcrBtn">Upload JCR Impact Factors</button>
     <button class="btn-ghost hidden" id="enrichAllBtn">Enrich All (Crossref)</button>
     <button class="btn-ghost" id="adminBtn">Admin</button>
   </div>
 </header>
 
-<!-- Personal Details -->
-<section class="profile" id="profileSection">
-  <div class="profile-inner">
-    <div class="profile-photo-col">
-      <img src="yeasin-photo.png" alt="Photo of Dr. Md Yeasin" class="profile-photo">
-      <div class="profile-links" id="pLinks">
-        <a href="https://scholar.google.com/citations?user=xejMKD0AAAAJ&hl=en&oi=sra" target="_blank" rel="noopener" class="profile-link-btn">Google Scholar</a>
-        <a href="https://www.linkedin.com/in/dr-yeasin/" target="_blank" rel="noopener" class="profile-link-btn">LinkedIn</a>
-      </div>
-    </div>
-
-    <div class="profile-main">
-      <h1 id="pName">Dr. Md Yeasin</h1>
-      <p class="profile-role" id="pRole">Scientist &middot; ICAR-IASRI, New Delhi - 110012</p>
-      <p class="profile-address" id="pAddress"></p>
-      <div class="profile-contact" id="pContact"></div>
-
-      <h3>Research Interest</h3>
-      <p class="profile-interest" id="pInterest"></p>
-
-      <div class="profile-columns">
-        <div>
-          <h3>Education</h3>
-          <ul class="profile-list" id="pEducation"></ul>
-        </div>
-        <div>
-          <h3>Academic Accolades</h3>
-          <ul class="profile-list" id="pAccolades"></ul>
-        </div>
-      </div>
-      <div class="profile-columns">
-        <div>
-          <h3>Employment</h3>
-          <ul class="profile-list" id="pEmployment"></ul>
-        </div>
-        <div>
-          <h3>Other Records</h3>
-          <ul class="profile-list" id="pOtherRecords"></ul>
-        </div>
-    </div>
-  </div>
-  
-</section>
-
 <!-- Navigation tabs -->
 <nav class="section-nav" id="sectionNav">
-  <button class="nav-tab active" data-section="publications">Publications</button>
+  <button class="nav-tab active" data-section="home">Home</button>
+  <button class="nav-tab" data-section="publications">Publications</button>
   <button class="nav-tab" data-section="awards">Awards</button>
   <button class="nav-tab" data-section="projects">Projects</button>
   <button class="nav-tab" data-section="book-chapters">Book Chapters</button>
@@ -82,10 +36,60 @@
 
 <main>
 
+  <!-- ============ HOME ============ -->
+  <section class="section-panel" id="section-home">
+    <section class="profile" id="profileSection">
+      <div class="profile-inner">
+        <div class="profile-photo-col">
+          <img src="yeasin-photo.png" alt="Photo of Dr. Md Yeasin" class="profile-photo">
+          <div class="profile-links" id="pLinks">
+            <a href="https://scholar.google.com/citations?user=xejMKD0AAAAJ&hl=en&oi=sra" target="_blank" rel="noopener" class="profile-link-btn">Google Scholar</a>
+            <a href="https://www.linkedin.com/in/dr-yeasin/" target="_blank" rel="noopener" class="profile-link-btn">LinkedIn</a>
+          </div>
+        </div>
+
+        <div class="profile-main">
+          <h1 id="pName">Dr. Md Yeasin</h1>
+          <p class="profile-role" id="pRole">Scientist &middot; ICAR-IASRI, New Delhi - 110012</p>
+          <p class="profile-address" id="pAddress"></p>
+          <div class="profile-contact" id="pContact"></div>
+
+          <h3>Research Interest</h3>
+          <p class="profile-interest" id="pInterest"></p>
+
+          <div class="profile-columns">
+            <div>
+              <h3>Education</h3>
+              <ul class="profile-list" id="pEducation"></ul>
+            </div>
+            <div>
+              <h3>Academic Accolades</h3>
+              <ul class="profile-list" id="pAccolades"></ul>
+            </div>
+          </div>
+
+          <div class="profile-columns">
+            <div>
+              <h3>Employment</h3>
+              <ul class="profile-list" id="pEmployment"></ul>
+            </div>
+            <div>
+              <h3>Other Records</h3>
+              <ul class="profile-list" id="pOtherRecords"></ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </section>
+
   <!-- ============ PUBLICATIONS ============ -->
-  <section class="section-panel" id="section-publications">
+  <section class="section-panel hidden" id="section-publications">
     <section class="hero">
-      <h2>Publication Records</h2>
+      <div class="hero-header">
+        <h2>Publication Records</h2>
+        <button class="btn-ghost hidden" id="addPublicationBtn">+ Add Publication</button>
+      </div>
       <p class="hero-sub">Peer-reviewed journal articles, indexed by year, journal, quartile and research domain.</p>
       <div class="stat-row" id="statRow"></div>
     </section>
@@ -268,6 +272,7 @@
       <div><label for="eType">Article Type</label><input id="eType"></div>
       <div><label for="eIF">Impact Factor</label><input id="eIF"></div>
       <div><label for="eQuartile">Quartile</label><input id="eQuartile"></div>
+      <div><label for="eNaasScore">NAAS Score</label><input id="eNaasScore"></div>
       <div><label for="eField">Field</label>
         <select id="eField">
           <option value="Statistical">Statistical</option>
@@ -305,20 +310,76 @@
   </div>
 </div>
 
-<!-- Journal scores upload modal -->
-<div class="modal-backdrop" id="scoresModalBackdrop">
+<!-- NAAS scores upload modal -->
+<div class="modal-backdrop" id="naasModalBackdrop">
   <div class="modal">
-    <button class="modal-close" data-close="scoresModalBackdrop">&times;</button>
-    <h2>Upload Journal Scores</h2>
+    <button class="modal-close" data-close="naasModalBackdrop">&times;</button>
+    <h2>Upload NAAS Scores</h2>
     <p class="modal-hint">
-      Upload an Excel sheet with columns: <strong>Journal Name</strong>, JID, Impact Factor, NAAS Score, Quartile, Year.
-      Every paper's Impact Factor / Quartile is matched and refreshed by journal name automatically.
+      Upload the official NAAS "Score of Science Journals" PDF (naas.org.in). Every paper's NAAS Score
+      and ISSN are matched and refreshed automatically by journal ISSN. This usually takes under a minute.
     </p>
-    <label for="scoresFile">Excel file (.xlsx)</label>
-    <input type="file" id="scoresFile" accept=".xlsx" aria-label="Excel file with journal scores">
-    <button class="btn-primary" id="scoresSubmit">Upload &amp; Apply</button>
-    <p class="modal-error" id="scoresError"></p>
-    <p class="modal-success" id="scoresSuccess"></p>
+    <label for="naasFile">NAAS Score PDF</label>
+    <input type="file" id="naasFile" accept=".pdf" aria-label="NAAS Score PDF">
+    <button class="btn-primary" id="naasSubmit">Upload &amp; Apply</button>
+    <p class="modal-error" id="naasError"></p>
+    <p class="modal-success" id="naasSuccess"></p>
+  </div>
+</div>
+
+<!-- JCR scores upload modal -->
+<div class="modal-backdrop" id="jcrModalBackdrop">
+  <div class="modal">
+    <button class="modal-close" data-close="jcrModalBackdrop">&times;</button>
+    <h2>Upload JCR Impact Factors</h2>
+    <p class="modal-hint">
+      Upload the Journal Citation Reports Impact Factor PDF. Every paper's Impact Factor / Quartile is
+      matched and refreshed by ISSN. Journals with no official NAAS rating get an estimated one
+      (6.0 + Impact Factor, capped at 20.0). <strong>This file is large (hundreds of pages) — the upload
+      can take 2-3 minutes. That's expected, please don't close this window.</strong>
+    </p>
+    <label for="jcrFile">JCR Impact Factor PDF</label>
+    <input type="file" id="jcrFile" accept=".pdf" aria-label="JCR Impact Factor PDF">
+    <button class="btn-primary" id="jcrSubmit">Upload &amp; Apply</button>
+    <p class="modal-error" id="jcrError"></p>
+    <p class="modal-success" id="jcrSuccess"></p>
+  </div>
+</div>
+
+<!-- CV download modal -->
+<div class="modal-backdrop" id="cvModalBackdrop">
+  <div class="modal modal-wide">
+    <button class="modal-close" data-close="cvModalBackdrop">&times;</button>
+    <h2>Download CV</h2>
+    <p class="modal-hint">Pick exactly which items to include, then generate a styled PDF.</p>
+    <div class="cv-bulk-actions">
+      <button type="button" class="btn-secondary" id="cvSelectAllBtn">Select All</button>
+      <button type="button" class="btn-secondary" id="cvClearAllBtn">Clear All</button>
+    </div>
+    <div class="cv-sections" id="cvSections">
+      <div class="cv-section">
+        <label class="cv-section-header"><input type="checkbox" class="cv-section-toggle" data-section="publications"> <strong>Publications</strong></label>
+        <div class="cv-item-list" id="cvList_publications"></div>
+      </div>
+      <div class="cv-section">
+        <label class="cv-section-header"><input type="checkbox" class="cv-section-toggle" data-section="awards"> <strong>Awards</strong></label>
+        <div class="cv-item-list" id="cvList_awards"></div>
+      </div>
+      <div class="cv-section">
+        <label class="cv-section-header"><input type="checkbox" class="cv-section-toggle" data-section="projects"> <strong>Projects</strong></label>
+        <div class="cv-item-list" id="cvList_projects"></div>
+      </div>
+      <div class="cv-section">
+        <label class="cv-section-header"><input type="checkbox" class="cv-section-toggle" data-section="book-chapters"> <strong>Book Chapters</strong></label>
+        <div class="cv-item-list" id="cvList_book-chapters"></div>
+      </div>
+      <div class="cv-section">
+        <label class="cv-section-header"><input type="checkbox" class="cv-section-toggle" data-section="software"> <strong>Software / Packages</strong></label>
+        <div class="cv-item-list" id="cvList_software"></div>
+      </div>
+    </div>
+    <button class="btn-primary" id="cvGenerateBtn">Generate &amp; Download</button>
+    <p class="modal-error" id="cvError"></p>
   </div>
 </div>
 

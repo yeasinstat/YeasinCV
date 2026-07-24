@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS papers (
     hidden               INTEGER DEFAULT 0,
     abstract             TEXT DEFAULT '',
     keywords             TEXT DEFAULT '',
+    naas_score           TEXT DEFAULT '',
     created_at           TEXT DEFAULT (datetime('now'))
 );
 
@@ -146,6 +147,7 @@ CREATE TABLE IF NOT EXISTS software (
 CREATE TABLE IF NOT EXISTS journal_scores (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     journal_name   TEXT UNIQUE,
+    issn           TEXT DEFAULT '',
     jid            TEXT DEFAULT '',
     impact_factor  TEXT DEFAULT '',
     naas_score     TEXT DEFAULT '',
@@ -192,6 +194,15 @@ def migrate_db(conn):
     book_chapter_cols = {row[1] for row in conn.execute("PRAGMA table_info(book_chapters)")}
     if "doi" not in book_chapter_cols:
         conn.execute("ALTER TABLE book_chapters ADD COLUMN doi TEXT DEFAULT ''")
+    conn.commit()
+
+    if "naas_score" not in existing:
+        conn.execute("ALTER TABLE papers ADD COLUMN naas_score TEXT DEFAULT ''")
+    conn.commit()
+
+    js_cols = {row[1] for row in conn.execute("PRAGMA table_info(journal_scores)")}
+    if "issn" not in js_cols:
+        conn.execute("ALTER TABLE journal_scores ADD COLUMN issn TEXT DEFAULT ''")
     conn.commit()
 
 
@@ -481,14 +492,24 @@ def require_auth(f):
 
 def send_otp_email(email: str, otp: str):
     """
-    Sends the OTP by email. Configure SMTP credentials via environment
-    variables (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD) to enable
-    real delivery. Without them, the OTP is only logged to the server
-    console so you can still test the flow locally.
+    Sends the OTP by email, trying methods in order:
+      1. Resend (HTTPS API) if RESEND_API_KEY is set — works on hosts that
+         block outbound SMTP ports, like Render's free tier.
+      2. Traditional SMTP if SMTP_HOST is set — good for local testing.
+    Falls back to dev-mode (OTP returned directly in the API response,
+    shown in the login popup) if neither is configured or both fail.
     """
+    resend_api_key = os.environ.get("RESEND_API_KEY")
+    if resend_api_key:
+        try:
+            return _send_via_resend(email, otp, resend_api_key)
+        except Exception as e:
+            print(f"[RESEND ERROR] Failed to send OTP email: {e}")
+            return False
+
     smtp_host = os.environ.get("SMTP_HOST")
     if not smtp_host:
-        print(f"[DEV MODE] OTP for {email}: {otp}  (configure SMTP_* env vars to send real emails)")
+        print(f"[DEV MODE] OTP for {email}: {otp}  (configure RESEND_API_KEY or SMTP_* env vars to send real emails)")
         return False
     import smtplib
     from email.mime.text import MIMEText
@@ -500,6 +521,36 @@ def send_otp_email(email: str, otp: str):
         server.starttls()
         server.login(os.environ.get("SMTP_USER"), os.environ.get("SMTP_PASSWORD"))
         server.send_message(msg)
+    return True
+
+
+def _send_via_resend(email: str, otp: str, api_key: str) -> bool:
+    """Sends the OTP via Resend's HTTPS API — bypasses SMTP-port blocking."""
+    import urllib.request
+
+    sender = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
+    payload = json.dumps({
+        "from": sender,
+        "to": [email],
+        "subject": "Your Admin Login OTP",
+        "text": (
+            f"Your OTP for the Academic Research Information Management "
+            f"System is: {otp}\nIt expires in 5 minutes."
+        ),
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        if resp.status >= 400:
+            raise RuntimeError(f"Resend API returned status {resp.status}")
     return True
 
 
@@ -525,6 +576,8 @@ def login():
 
     resp = {"message": "OTP sent to your registered email."}
     if not delivered:
+        # DEV MODE ONLY: expose the OTP directly since no SMTP is configured.
+        # Remove this in production once real email delivery is set up.
         resp["dev_otp"] = otp
     return jsonify(resp)
 
@@ -751,7 +804,7 @@ def update_paper(pub_id):
     fields = [
         "complete_reference", "title", "authors", "author_position", "year",
         "journal", "publisher", "issn", "doi", "article_type",
-        "impact_factor", "quartile", "abstract", "keywords", "field", "domain",
+        "impact_factor", "quartile", "naas_score", "abstract", "keywords", "field", "domain",
     ]
     updates, params = [], []
     for f in fields:
@@ -931,6 +984,52 @@ SCIENTIST_PROFILE = {
 # add/edit/delete) but without domain/hide logic, since those are specific
 # to the Papers table.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# CRAN auto-fill — given just a CRAN package URL, fetches Package Name,
+# Reference (citation-style string), and Year automatically via the
+# unofficial but widely-used crandb.r-pkg.org metadata API, so the admin
+# doesn't have to type them in by hand.
+# ---------------------------------------------------------------------------
+def _fetch_cran_metadata(cran_url: str):
+    """Returns {package_name, reference, year} for a CRAN URL, or None if it can't be resolved."""
+    import urllib.request
+
+    m = re.search(r"[/?&]package=([A-Za-z0-9.]+)", cran_url) or re.search(r"/packages?/([A-Za-z0-9.]+)", cran_url)
+    if not m:
+        return None
+    pkg = m.group(1)
+
+    req = urllib.request.Request(
+        f"https://crandb.r-pkg.org/{pkg}",
+        headers={"User-Agent": "AcademicIMS/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+    title = (data.get("Title") or "").strip()
+    version = data.get("Version", "")
+    date_published = data.get("Date/Published", "") or data.get("Packaged", "")
+    year = date_published[:4] if date_published else ""
+
+    author_raw = data.get("Author", "") or ""
+    authors_clean = re.sub(r"\[[^\]]*\]", "", author_raw)  # strip [aut, cre] role tags
+    authors_clean = re.sub(r"\s+", " ", authors_clean).strip().strip(",")
+
+    parts = []
+    if authors_clean:
+        parts.append(authors_clean)
+    if year:
+        parts.append(f"({year}).")
+    parts.append(f"{pkg}: {title} (R package version {version}).")
+    parts.append(cran_url)
+    reference = " ".join(parts).strip()
+
+    return {"package_name": pkg, "reference": reference, "year": year}
+
+
 SIMPLE_TABLES = {
     "awards": {
         "id_col": "award_id",
@@ -971,6 +1070,12 @@ def _register_simple_crud(endpoint_name, config):
     def add_item():
         data = request.get_json(force=True)
         db = get_db()
+        if table == "software" and data.get("cran_url") and not data.get("package_name"):
+            meta = _fetch_cran_metadata(data["cran_url"])
+            if meta:
+                data["package_name"] = meta["package_name"]
+                data["reference"] = data.get("reference") or meta["reference"]
+                data["year"] = data.get("year") or meta["year"]
         vals = [data.get(c, "") for c in columns]
         placeholders = ",".join(["?"] * len(columns))
         cur = db.execute(f"INSERT INTO {table} ({','.join(columns)}) VALUES ({placeholders})", vals)
@@ -980,6 +1085,12 @@ def _register_simple_crud(endpoint_name, config):
     def update_item(item_id):
         data = request.get_json(force=True)
         db = get_db()
+        if table == "software" and data.get("cran_url") and not data.get("package_name"):
+            meta = _fetch_cran_metadata(data["cran_url"])
+            if meta:
+                data["package_name"] = meta["package_name"]
+                data["reference"] = data.get("reference") or meta["reference"]
+                data["year"] = data.get("year") or meta["year"]
         updates, params = [], []
         for c in columns:
             if c in data:
@@ -1020,12 +1131,95 @@ for _endpoint, _config in SIMPLE_TABLES.items():
 
 
 # ---------------------------------------------------------------------------
-# Journal scores (Impact Factor / NAAS score / JID) — Excel-linked lookup
-# table. Upload a spreadsheet once a year and every paper's displayed
-# Impact Factor / Quartile is refreshed from it via journal-name matching.
+# Journal scores (Impact Factor / NAAS score / JID) — PDF-linked lookup
+# table. Upload the official NAAS list and/or JCR list once a year (as
+# published PDFs) and every paper's Impact Factor / Quartile / NAAS Score
+# is refreshed automatically, matched primarily by ISSN.
 # ---------------------------------------------------------------------------
 def _norm_journal(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
+
+
+def _norm_issn(issn: str) -> str:
+    issn = (issn or "").strip().upper()
+    return issn if re.match(r"^\d{4}-\d{3}[\dX]$", issn) else ""
+
+
+NAAS_LINE_RE = re.compile(r"^\d+\s+(\S+)\s+(\d{4}-\d{3}[\dXx])\s+(.+?)\s+([\d.]+)$")
+
+# JCR rows vary in shape: full row (both JIF years + quartile), a row
+# missing last year's JIF, or a row with no usable JIF at all (skipped).
+JCR_LINE_FULL_RE = re.compile(
+    r"^(.+?)\s+(\d{4}-\d{3}[\dXx]|N/A)\s+([A-Za-z, ]+?)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(Q\d|N/A)$"
+)
+JCR_LINE_SHORT_RE = re.compile(
+    r"^(.+?)\s+(\d{4}-\d{3}[\dXx]|N/A)\s+([A-Za-z, ]+?)\s+(\d+)\s+([\d.]+)\s+(Q\d|N/A)$"
+)
+
+
+def _parse_naas_pdf(file_stream):
+    """Returns a list of {issn, jid, journal_name, naas_score} dicts."""
+    import pdfplumber
+    results = []
+    with pdfplumber.open(file_stream) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            for line in text.split("\n"):
+                m = NAAS_LINE_RE.match(line.strip())
+                if not m:
+                    continue
+                jid, issn, name, score = m.groups()
+                results.append({
+                    "issn": _norm_issn(issn), "jid": jid,
+                    "journal_name": name.strip(), "naas_score": score,
+                })
+    return results
+
+
+def _parse_jcr_pdf(file_stream):
+    """Returns a list of {issn, journal_name, impact_factor, quartile} dicts."""
+    import pdfplumber
+    results = []
+    with pdfplumber.open(file_stream) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            for line in text.split("\n"):
+                line = line.strip()
+                m = JCR_LINE_FULL_RE.match(line)
+                if m:
+                    name, issn, _index, _cit, jif_latest, _jif_prev, quartile = m.groups()
+                else:
+                    m = JCR_LINE_SHORT_RE.match(line)
+                    if not m:
+                        continue
+                    name, issn, _index, _cit, jif_latest, quartile = m.groups()
+                results.append({
+                    "issn": _norm_issn(issn), "journal_name": name.strip(),
+                    "impact_factor": jif_latest,
+                    "quartile": quartile if quartile != "N/A" else "",
+                })
+    return results
+
+
+def _apply_naas_fallback_formula(db):
+    """
+    For any journal with a known Impact Factor but no NAAS score on file,
+    estimate one as NAAS = min(6.0 + Impact Factor, 20.0), per NAAS
+    convention for newly-indexed journals.
+    """
+    rows = db.execute(
+        "SELECT id, impact_factor FROM journal_scores WHERE (naas_score IS NULL OR naas_score = '') AND impact_factor != ''"
+    ).fetchall()
+    for r in rows:
+        try:
+            jif = float(r["impact_factor"])
+        except (TypeError, ValueError):
+            continue
+        estimated = round(min(6.0 + jif, 20.0), 2)
+        db.execute("UPDATE journal_scores SET naas_score = ? WHERE id = ?", (str(estimated), r["id"]))
+    if rows:
+        db.commit()
+    return len(rows)
 
 
 @app.route("/api/journal-scores", methods=["GET"])
@@ -1035,103 +1229,144 @@ def list_journal_scores():
     return jsonify([dict(r) for r in rows])
 
 
-@app.route("/api/journal-scores/upload", methods=["POST"])
-@require_auth
-def upload_journal_scores():
+def _upsert_journal_score(db, journal_name, issn="", jid="", impact_factor="", naas_score="", quartile=""):
     """
-    Accepts a multipart/form-data upload with field name 'file', an .xlsx
-    spreadsheet. Expected columns (case-insensitive, order doesn't matter):
-    Journal Name, JID, Impact Factor, NAAS Score, Quartile, Year.
-    After loading, every paper's impact_factor/quartile is refreshed by
-    matching its journal name against this table (case/punctuation-insensitive).
+    Upserts into journal_scores. Matches on ISSN when available (most
+    reliable, since journal names get renamed/abbreviated differently
+    across lists); falls back to matching on normalized journal name.
     """
-    try:
-        import openpyxl
-    except ImportError:
-        return jsonify({"error": "openpyxl is not installed on the server. Run: pip install openpyxl"}), 500
+    existing = None
+    if issn:
+        existing = db.execute("SELECT id FROM journal_scores WHERE issn = ?", (issn,)).fetchone()
+    if not existing:
+        existing = db.execute(
+            "SELECT id FROM journal_scores WHERE lower(journal_name) = lower(?)", (journal_name,)
+        ).fetchone()
 
+    if existing:
+        updates, params = [], []
+        if issn:
+            updates.append("issn = ?"); params.append(issn)
+        if jid:
+            updates.append("jid = ?"); params.append(jid)
+        if impact_factor:
+            updates.append("impact_factor = ?"); params.append(impact_factor)
+        if naas_score:
+            updates.append("naas_score = ?"); params.append(naas_score)
+        if quartile:
+            updates.append("quartile = ?"); params.append(quartile)
+        updates.append("updated_at = datetime('now')")
+        params.append(existing["id"])
+        db.execute(f"UPDATE journal_scores SET {', '.join(updates)} WHERE id = ?", params)
+    else:
+        db.execute(
+            """INSERT INTO journal_scores (journal_name, issn, jid, impact_factor, naas_score, quartile, updated_at)
+               VALUES (?,?,?,?,?,?, datetime('now'))""",
+            (journal_name, issn, jid, impact_factor, naas_score, quartile),
+        )
+
+
+@app.route("/api/journal-scores/upload-naas", methods=["POST"])
+@require_auth
+def upload_naas_scores():
+    """Accepts the official NAAS 'Score of Science Journals' PDF and loads it into journal_scores."""
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded (expected form field 'file')."}), 400
     file = request.files["file"]
 
     try:
-        wb = openpyxl.load_workbook(file, data_only=True)
+        rows = _parse_naas_pdf(file)
     except Exception as e:
-        return jsonify({"error": f"Could not read the Excel file: {e}"}), 400
+        return jsonify({"error": f"Could not read the NAAS PDF: {e}"}), 400
 
-    ws = wb.active
-    rows = list(ws.iter_rows(values_only=True))
     if not rows:
-        return jsonify({"error": "The spreadsheet appears to be empty."}), 400
-
-    header = [str(h or "").strip().lower() for h in rows[0]]
-
-    def find_col(*names):
-        for name in names:
-            if name in header:
-                return header.index(name)
-        return None
-
-    col_journal = find_col("journal name", "journal", "journal_name")
-    col_jid = find_col("jid", "journal id")
-    col_if = find_col("impact factor", "if", "impact_factor")
-    col_naas = find_col("naas score", "naas", "naas_score")
-    col_quartile = find_col("quartile")
-    col_year = find_col("year", "year updated")
-
-    if col_journal is None:
-        return jsonify({"error": "Couldn't find a 'Journal Name' column in the spreadsheet header."}), 400
+        return jsonify({"error": "No journal rows could be parsed from this PDF. Is it the NAAS Score list?"}), 400
 
     db = get_db()
-    loaded = 0
-    for row in rows[1:]:
-        if col_journal >= len(row) or not row[col_journal]:
-            continue
-        journal_name = str(row[col_journal]).strip()
-        jid = str(row[col_jid]).strip() if col_jid is not None and col_jid < len(row) and row[col_jid] else ""
-        impact_factor = str(row[col_if]).strip() if col_if is not None and col_if < len(row) and row[col_if] is not None else ""
-        naas_score = str(row[col_naas]).strip() if col_naas is not None and col_naas < len(row) and row[col_naas] is not None else ""
-        quartile = str(row[col_quartile]).strip() if col_quartile is not None and col_quartile < len(row) and row[col_quartile] else ""
-        year_updated = str(row[col_year]).strip() if col_year is not None and col_year < len(row) and row[col_year] else ""
-
-        db.execute(
-            """INSERT INTO journal_scores (journal_name, jid, impact_factor, naas_score, quartile, year_updated, updated_at)
-               VALUES (?,?,?,?,?,?, datetime('now'))
-               ON CONFLICT(journal_name) DO UPDATE SET
-                 jid=excluded.jid, impact_factor=excluded.impact_factor,
-                 naas_score=excluded.naas_score, quartile=excluded.quartile,
-                 year_updated=excluded.year_updated, updated_at=datetime('now')""",
-            (journal_name, jid, impact_factor, naas_score, quartile, year_updated),
-        )
-        loaded += 1
+    for r in rows:
+        _upsert_journal_score(db, r["journal_name"], issn=r["issn"], jid=r["jid"], naas_score=r["naas_score"])
     db.commit()
 
     updated_papers = _apply_journal_scores_to_papers(db)
-
     return jsonify({
-        "message": f"Loaded {loaded} journal(s) from the spreadsheet. Updated Impact Factor/Quartile on {updated_papers} paper(s).",
-        "loaded": loaded,
+        "message": f"Loaded {len(rows)} journal(s) from the NAAS list. Updated {updated_papers} paper(s).",
+        "loaded": len(rows),
+        "papers_updated": updated_papers,
+    })
+
+
+@app.route("/api/journal-scores/upload-jcr", methods=["POST"])
+@require_auth
+def upload_jcr_scores():
+    """
+    Accepts the JCR 'Journal Impact Factor' PDF and loads it into
+    journal_scores. This file is very large (hundreds of pages) so this
+    request can take several minutes — that's expected, not a bug.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded (expected form field 'file')."}), 400
+    file = request.files["file"]
+
+    try:
+        rows = _parse_jcr_pdf(file)
+    except Exception as e:
+        return jsonify({"error": f"Could not read the JCR PDF: {e}"}), 400
+
+    if not rows:
+        return jsonify({"error": "No journal rows could be parsed from this PDF. Is it the JCR Impact Factor list?"}), 400
+
+    db = get_db()
+    for r in rows:
+        _upsert_journal_score(db, r["journal_name"], issn=r["issn"], impact_factor=r["impact_factor"], quartile=r["quartile"])
+    db.commit()
+
+    naas_estimated = _apply_naas_fallback_formula(db)
+    updated_papers = _apply_journal_scores_to_papers(db)
+    return jsonify({
+        "message": (
+            f"Loaded {len(rows)} journal(s) from the JCR list. "
+            f"Estimated a NAAS score for {naas_estimated} journal(s) with no official NAAS rating. "
+            f"Updated {updated_papers} paper(s)."
+        ),
+        "loaded": len(rows),
+        "naas_estimated": naas_estimated,
         "papers_updated": updated_papers,
     })
 
 
 def _apply_journal_scores_to_papers(db):
-    scores = db.execute("SELECT journal_name, impact_factor, naas_score, quartile FROM journal_scores").fetchall()
-    score_map = {_norm_journal(r["journal_name"]): r for r in scores}
+    """
+    Refreshes every paper's Impact Factor / Quartile / NAAS Score / ISSN
+    from journal_scores, matching by ISSN first (most reliable), falling
+    back to normalized journal name.
+    """
+    scores = db.execute("SELECT journal_name, issn, impact_factor, naas_score, quartile FROM journal_scores").fetchall()
+    by_issn = {r["issn"]: r for r in scores if r["issn"]}
+    by_name = {_norm_journal(r["journal_name"]): r for r in scores}
 
-    papers = db.execute("SELECT publication_id, journal FROM papers").fetchall()
+    papers = db.execute("SELECT publication_id, journal, issn FROM papers").fetchall()
     updated = 0
     for p in papers:
-        match = score_map.get(_norm_journal(p["journal"]))
+        match = by_issn.get(_norm_issn(p["issn"])) if p["issn"] else None
+        if not match:
+            match = by_name.get(_norm_journal(p["journal"]))
         if not match:
             continue
-        new_if = match["impact_factor"] or match["naas_score"]
-        new_quartile = match["quartile"] or ("NAAS" if match["naas_score"] and not match["impact_factor"] else "")
-        if new_if or new_quartile:
+
+        new_if = match["impact_factor"]
+        new_naas = match["naas_score"]
+        new_quartile = match["quartile"] or ("NAAS" if new_naas and not new_if else "")
+        new_issn = match["issn"]
+
+        if new_if or new_naas or new_quartile or new_issn:
             db.execute(
-                "UPDATE papers SET impact_factor = COALESCE(NULLIF(?, ''), impact_factor), "
-                "quartile = COALESCE(NULLIF(?, ''), quartile) WHERE publication_id = ?",
-                (new_if, new_quartile, p["publication_id"]),
+                "UPDATE papers SET "
+                "impact_factor = COALESCE(NULLIF(?, ''), impact_factor), "
+                "naas_score = COALESCE(NULLIF(?, ''), naas_score), "
+                "quartile = COALESCE(NULLIF(?, ''), quartile), "
+                "issn = COALESCE(NULLIF(issn, ''), NULLIF(?, '')) "
+                "WHERE publication_id = ?",
+                (new_if, new_naas, new_quartile, new_issn, p["publication_id"]),
             )
             updated += 1
     db.commit()
@@ -1144,9 +1379,197 @@ def apply_journal_scores():
     """Re-applies the currently-loaded journal_scores table to all papers (no new upload)."""
     db = get_db()
     updated = _apply_journal_scores_to_papers(db)
-    return jsonify({"message": f"Refreshed Impact Factor/Quartile on {updated} paper(s) from the journal scores table.", "papers_updated": updated})
+    return jsonify({"message": f"Refreshed Impact Factor/Quartile/NAAS on {updated} paper(s) from the journal scores table.", "papers_updated": updated})
 
+
+# ---------------------------------------------------------------------------
+# CV download — admin picks which sections to include (Publications,
+# Awards, Projects, Book Chapters, Software) and gets back a generated,
+# styled PDF. Uses reportlab (pure Python, no system graphics libraries
+# required) so it works the same locally and on minimal hosts like Render.
+# ---------------------------------------------------------------------------
+def _build_cv_pdf(selections):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, HRFlowable
+    )
+    import io
+
+    ink = colors.HexColor("#1C2B39")
+    olive = colors.HexColor("#454F32")
+    slate = colors.HexColor("#6B7280")
+    line = colors.HexColor("#DCD5C4")
+
+    name_style = ParagraphStyle("name", fontName="Times-Bold", fontSize=22, textColor=ink, leading=26)
+    role_style = ParagraphStyle("role", fontName="Helvetica-Bold", fontSize=11, textColor=olive, spaceAfter=2)
+    small_style = ParagraphStyle("small", fontName="Helvetica", fontSize=8.5, textColor=slate, leading=12)
+    h2_style = ParagraphStyle("h2", fontName="Times-Bold", fontSize=14, textColor=ink, spaceBefore=14, spaceAfter=6)
+    body_style = ParagraphStyle("body", fontName="Helvetica", fontSize=9.5, textColor=colors.HexColor("#1C2B39"), leading=13.5)
+    meta_style = ParagraphStyle("meta", fontName="Helvetica-Oblique", fontSize=8.5, textColor=slate, leading=12, spaceAfter=8)
+    entry_title_style = ParagraphStyle("entry_title", fontName="Helvetica-Bold", fontSize=9.5, textColor=ink, leading=13, spaceBefore=6)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        topMargin=18 * mm, bottomMargin=18 * mm, leftMargin=18 * mm, rightMargin=18 * mm,
+    )
+    story = []
+
+    # ---- Header: photo + profile ----
+    photo_path = os.path.join(FRONTEND_DIR, "yeasin-photo.png")
+    header_cells = []
+    if os.path.exists(photo_path):
+        try:
+            img = Image(photo_path, width=30 * mm, height=30 * mm)
+            header_cells.append(img)
+        except Exception:
+            header_cells.append("")
+    else:
+        header_cells.append("")
+
+    p = SCIENTIST_PROFILE
+    contact_bits = []
+    if p.get("mobile"):
+        contact_bits.append("Mobile: " + " / ".join(p["mobile"]))
+    if p.get("email"):
+        contact_bits.append("Email: " + ", ".join(p["email"]))
+
+    info_flow = [
+        Paragraph(p["name"], name_style),
+        Paragraph(f"{p['designation']} &middot; {p['institute']}", role_style),
+        Paragraph(p.get("address", ""), small_style),
+        Paragraph(" &nbsp;|&nbsp; ".join(contact_bits), small_style),
+    ]
+    header_cells.append(info_flow)
+
+    header_table = Table([header_cells], colWidths=[35 * mm, None])
+    header_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (0, 0), 0),
+        ("LEFTPADDING", (1, 0), (1, 0), 12),
+    ]))
+    story.append(header_table)
+    story.append(Spacer(1, 10))
+    story.append(HRFlowable(width="100%", color=line, thickness=0.75))
+    story.append(Spacer(1, 8))
+
+    if p.get("research_interest"):
+        story.append(Paragraph("Research Interest", h2_style))
+        story.append(Paragraph(p["research_interest"], body_style))
+
+    if p.get("education"):
+        story.append(Paragraph("Education", h2_style))
+        for e in p["education"]:
+            story.append(Paragraph(f"<b>{e['degree']}</b> ({e['year']}) &middot; {e['institution']}", body_style))
+
+    if p.get("employment"):
+        story.append(Paragraph("Employment", h2_style))
+        for e in p["employment"]:
+            story.append(Paragraph(f"<b>{e['period']}</b> &middot; {e['role']}, {e['institution']}", body_style))
+
+    db = get_db()
+
+    def section_header(title):
+        story.append(Paragraph(title, h2_style))
+
+    def id_filter(ids):
+        placeholders = ",".join(["?"] * len(ids))
+        return placeholders, list(ids)
+
+    pub_ids = selections.get("publications") or []
+    if pub_ids:
+        ph, params = id_filter(pub_ids)
+        rows = db.execute(f"SELECT * FROM papers WHERE publication_id IN ({ph}) ORDER BY year DESC", params).fetchall()
+        section_header(f"Publications ({len(rows)})")
+        for i, r in enumerate(rows, 1):
+            story.append(Paragraph(f"{i}. {r['complete_reference'] or r['title']}", body_style))
+            tag_bits = []
+            if r["quartile"]:
+                tag_bits.append(r["quartile"])
+            if r["impact_factor"]:
+                tag_bits.append(f"IF {r['impact_factor']}")
+            if r["naas_score"]:
+                tag_bits.append(f"NAAS {r['naas_score']}")
+            if tag_bits:
+                story.append(Paragraph(" &middot; ".join(tag_bits), meta_style))
+
+    award_ids = selections.get("awards") or []
+    if award_ids:
+        ph, params = id_filter(award_ids)
+        rows = db.execute(f"SELECT * FROM awards WHERE award_id IN ({ph}) ORDER BY year DESC", params).fetchall()
+        section_header(f"Awards ({len(rows)})")
+        for r in rows:
+            story.append(Paragraph(r["title"], entry_title_style))
+            story.append(Paragraph(f"{r['awarding_body']} &middot; {r['year']}", meta_style))
+
+    project_ids = selections.get("projects") or []
+    if project_ids:
+        ph, params = id_filter(project_ids)
+        rows = db.execute(f"SELECT * FROM projects WHERE project_id IN ({ph}) ORDER BY date_start DESC", params).fetchall()
+        section_header(f"Projects ({len(rows)})")
+        for r in rows:
+            story.append(Paragraph(r["project_title"], entry_title_style))
+            story.append(Paragraph(f"{r['funding_agency']} &middot; Started {r['date_start']} &middot; {r['status']}", meta_style))
+
+    chapter_ids = selections.get("book-chapters") or []
+    if chapter_ids:
+        ph, params = id_filter(chapter_ids)
+        rows = db.execute(f"SELECT * FROM book_chapters WHERE book_chapter_id IN ({ph}) ORDER BY year DESC", params).fetchall()
+        section_header(f"Book Chapters ({len(rows)})")
+        for r in rows:
+            story.append(Paragraph(r["title"], entry_title_style))
+            story.append(Paragraph(f"{r['authors']}", body_style))
+            story.append(Paragraph(f"{r['book_title']} &middot; {r['publisher']} &middot; {r['year']}", meta_style))
+
+    software_ids = selections.get("software") or []
+    if software_ids:
+        ph, params = id_filter(software_ids)
+        rows = db.execute(f"SELECT * FROM software WHERE software_id IN ({ph}) ORDER BY year DESC", params).fetchall()
+        section_header(f"Software / Packages ({len(rows)})")
+        for r in rows:
+            story.append(Paragraph(r["package_name"], entry_title_style))
+            story.append(Paragraph(f"{r['reference']}", meta_style))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf
+
+
+@app.route("/api/cv/download", methods=["POST"])
+@require_auth
+def download_cv():
+    """
+    Accepts { "publications": [id, id, ...], "awards": [...], "projects": [...],
+    "book-chapters": [...], "software": [...] } — each key holds the specific
+    item IDs the admin selected in that section. A missing or empty key means
+    that section is left out of the CV entirely.
+    """
+    data = request.get_json(force=True) or {}
+    valid_keys = {"publications", "awards", "projects", "book-chapters", "software"}
+    selections = {}
+    for k, v in data.items():
+        if k in valid_keys and isinstance(v, list):
+            selections[k] = [int(x) for x in v if str(x).isdigit()]
+
+    try:
+        pdf_buf = _build_cv_pdf(selections)
+    except Exception as e:
+        return jsonify({"error": f"Could not generate the CV: {e}"}), 500
+
+    from flask import send_file
+    return send_file(
+        pdf_buf, mimetype="application/pdf", as_attachment=True,
+        download_name="Md_Yeasin_CV.pdf",
+    )
+
+
+# Runs on import (not just "python app.py" directly) — this matters for
+# production servers like gunicorn, which import this module and call the
+# `app` object without ever executing `if __name__ == "__main__":`.
+init_db()
 
 if __name__ == "__main__":
-    init_db()
-    app.run(host="0.0.0.0", debug=True, port=5000, threaded=True)
+    app.run(debug=True, port=5000, threaded=True)

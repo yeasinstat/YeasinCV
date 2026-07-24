@@ -3,3 +3,5 @@ flask-cors==4.0.1
 bibtexparser==1.4.1
 openpyxl==3.1.5
 gunicorn==22.0.0
+pdfplumber==0.11.9
+reportlab==4.2.5

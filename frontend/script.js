@@ -5,7 +5,7 @@ let currentPapers = [];
 let filterOptions = { domains: [] };
 let selectedDomains = new Set();
 let eDomainEdited = false;
-let currentSection = "publications";
+let currentSection = "home";
 
 // ---------------- helpers ----------------
 function $(id) { return document.getElementById(id); }
@@ -218,12 +218,14 @@ function renderPapers(papers) {
       <div class="paper-index">${String(i + 1).padStart(2, "0")}</div>
       <div>
         <h3 class="paper-title">${escapeHtml(p.title)}</h3>
-        <div class="paper-meta">${escapeHtml(p.authors)}${p.journal ? " &middot; " + escapeHtml(p.journal) : ""}</div>
+        <div class="paper-meta">${escapeHtml(p.authors)}${p.journal ? " &middot; " + escapeHtml(p.journal) : ""}${p.publisher ? " (" + escapeHtml(p.publisher) + ")" : ""}</div>
         <div class="paper-tags">
           ${domainTags}
           ${p.field ? `<span class="tag tag-domain">${escapeHtml(p.field)}</span>` : ""}
           ${p.quartile ? `<span class="tag tag-quartile-${p.quartile}">${escapeHtml(p.quartile)}</span>` : ""}
+          ${p.naas_score ? `<span class="tag tag-naas">NAAS ${escapeHtml(p.naas_score)}</span>` : ""}
           ${p.hidden ? `<span class="tag tag-hidden">Hidden</span>` : ""}
+          ${p.issn ? `<span class="paper-doi">ISSN ${escapeHtml(p.issn)}</span>` : ""}
           ${p.doi ? `<span class="paper-doi"><a href="${p.doi.startsWith("http") ? p.doi : "https://doi.org/" + p.doi}" target="_blank" rel="noopener">${escapeHtml(p.doi)}</a></span>` : ""}
         </div>
       </div>
@@ -316,21 +318,19 @@ $("otpSubmit").addEventListener("click", async () => {
   }
 });
 
-// ---------------- add publication button (injected) ----------------
-const addBtn = document.createElement("button");
-addBtn.textContent = "+ Add Publication";
-addBtn.className = "btn-ghost add-publication-btn hidden";
-$("scientistCard").insertBefore(addBtn, $("adminBtn"));
-addBtn.addEventListener("click", () => {
+// ---------------- add publication button (now lives in the Publications tab itself) ----------------
+$("addPublicationBtn").addEventListener("click", () => {
   $("addError").textContent = ""; $("addSuccess").textContent = "";
   openModal("addModalBackdrop");
 });
 
 function onAuthChange() {
   const visible = !!authToken;
-  addBtn.classList.toggle("hidden", !visible);
+  $("addPublicationBtn").classList.toggle("hidden", !visible);
   $("enrichAllBtn").classList.toggle("hidden", !visible);
-  $("uploadScoresBtn").classList.toggle("hidden", !visible);
+  $("uploadNaasBtn").classList.toggle("hidden", !visible);
+  $("uploadJcrBtn").classList.toggle("hidden", !visible);
+  $("downloadCvBtn").classList.toggle("hidden", !visible);
   document.querySelectorAll(".add-record-btn").forEach(b => b.classList.toggle("hidden", !visible));
   // re-render whichever section is active so admin action buttons show/hide
   loadSection(currentSection);
@@ -395,6 +395,7 @@ function openEditModal(id) {
   $("eType").value = p.article_type || "";
   $("eIF").value = p.impact_factor || "";
   $("eQuartile").value = p.quartile || "";
+  $("eNaasScore").value = p.naas_score || "";
   $("eField").value = p.field || "Interdisciplinary";
   $("eDomain").value = p.domain || "";
   $("eRef").value = p.complete_reference || "";
@@ -414,7 +415,7 @@ $("editSubmit").addEventListener("click", async () => {
     title: $("eTitle").value, authors: $("eAuthors").value, year: $("eYear").value,
     journal: $("eJournal").value, publisher: $("ePublisher").value, issn: $("eIssn").value,
     doi: $("eDoi").value, article_type: $("eType").value, impact_factor: $("eIF").value,
-    quartile: $("eQuartile").value, complete_reference: $("eRef").value,
+    quartile: $("eQuartile").value, naas_score: $("eNaasScore").value, complete_reference: $("eRef").value,
     abstract: $("eAbstract").value, keywords: $("eKeywords").value,
   };
   if (eDomainEdited) {
@@ -482,24 +483,171 @@ async function toggleHidden(id) {
   }
 }
 
-// ---------------- journal scores upload ----------------
-$("uploadScoresBtn").addEventListener("click", () => {
-  $("scoresError").textContent = ""; $("scoresSuccess").textContent = "";
-  openModal("scoresModalBackdrop");
+// ---------------- journal scores upload (NAAS + JCR, separately) ----------------
+$("uploadNaasBtn").addEventListener("click", () => {
+  $("naasError").textContent = ""; $("naasSuccess").textContent = "";
+  openModal("naasModalBackdrop");
 });
 
-$("scoresSubmit").addEventListener("click", async () => {
-  $("scoresError").textContent = ""; $("scoresSuccess").textContent = "";
-  const file = $("scoresFile").files[0];
-  if (!file) { $("scoresError").textContent = "Choose an .xlsx file first."; return; }
+$("naasSubmit").addEventListener("click", async () => {
+  $("naasError").textContent = ""; $("naasSuccess").textContent = "";
+  const file = $("naasFile").files[0];
+  if (!file) { $("naasError").textContent = "Choose the NAAS Score PDF first."; return; }
   const fd = new FormData();
   fd.append("file", file);
+  $("naasSubmit").textContent = "Uploading..."; $("naasSubmit").disabled = true;
   try {
-    const res = await apiUpload("/journal-scores/upload", fd);
-    $("scoresSuccess").textContent = res.message;
+    const res = await apiUpload("/journal-scores/upload-naas", fd);
+    $("naasSuccess").textContent = res.message;
     loadPapers(); loadFilterOptions(); loadStats();
   } catch (e) {
-    $("scoresError").textContent = e.message;
+    $("naasError").textContent = e.message;
+  } finally {
+    $("naasSubmit").textContent = "Upload & Apply"; $("naasSubmit").disabled = false;
+  }
+});
+
+$("uploadJcrBtn").addEventListener("click", () => {
+  $("jcrError").textContent = ""; $("jcrSuccess").textContent = "";
+  openModal("jcrModalBackdrop");
+});
+
+$("jcrSubmit").addEventListener("click", async () => {
+  $("jcrError").textContent = ""; $("jcrSuccess").textContent = "";
+  const file = $("jcrFile").files[0];
+  if (!file) { $("jcrError").textContent = "Choose the JCR Impact Factor PDF first."; return; }
+  const fd = new FormData();
+  fd.append("file", file);
+  $("jcrSubmit").textContent = "Uploading (this can take a few minutes)..."; $("jcrSubmit").disabled = true;
+  try {
+    const res = await apiUpload("/journal-scores/upload-jcr", fd);
+    $("jcrSuccess").textContent = res.message;
+    loadPapers(); loadFilterOptions(); loadStats();
+  } catch (e) {
+    $("jcrError").textContent = e.message;
+  } finally {
+    $("jcrSubmit").textContent = "Upload & Apply"; $("jcrSubmit").disabled = false;
+  }
+});
+
+// ---------------- CV download ----------------
+const CV_SECTIONS = {
+  "publications": {
+    endpoint: "/papers?sort=year_desc", idField: "publication_id",
+    label: p => `${escapeHtml(p.title)}`,
+    meta: p => `${escapeHtml(p.authors)}${p.journal ? " &middot; " + escapeHtml(p.journal) : ""} &middot; ${escapeHtml(p.year || "")}`,
+  },
+  "awards": {
+    endpoint: "/awards", idField: "award_id",
+    label: a => escapeHtml(a.title),
+    meta: a => `${escapeHtml(a.awarding_body)} &middot; ${escapeHtml(a.year)}`,
+  },
+  "projects": {
+    endpoint: "/projects", idField: "project_id",
+    label: pr => escapeHtml(pr.project_title),
+    meta: pr => `${escapeHtml(pr.funding_agency)} &middot; ${escapeHtml(pr.date_start)}`,
+  },
+  "book-chapters": {
+    endpoint: "/book-chapters", idField: "book_chapter_id",
+    label: b => escapeHtml(b.title),
+    meta: b => `${escapeHtml(b.book_title)} &middot; ${escapeHtml(b.year)}`,
+  },
+  "software": {
+    endpoint: "/software", idField: "software_id",
+    label: s => escapeHtml(s.package_name),
+    meta: s => `${escapeHtml(s.year)}`,
+  },
+};
+
+async function loadCvSections() {
+  for (const [key, cfg] of Object.entries(CV_SECTIONS)) {
+    const container = $(`cvList_${key}`);
+    container.innerHTML = `<p class="cv-item-meta">Loading...</p>`;
+    try {
+      const items = await api(cfg.endpoint);
+      container.innerHTML = items.length ? items.map(it => `
+        <label class="cv-item-option">
+          <input type="checkbox" class="cv-item-checkbox" data-section="${key}" data-id="${it[cfg.idField]}" checked>
+          <span><strong>${cfg.label(it)}</strong><br><span class="cv-item-meta">${cfg.meta(it)}</span></span>
+        </label>
+      `).join("") : `<p class="cv-item-meta">Nothing here yet.</p>`;
+      updateSectionToggleState(key);
+      container.querySelectorAll(".cv-item-checkbox").forEach(cb => {
+        cb.addEventListener("change", () => updateSectionToggleState(key));
+      });
+    } catch (e) {
+      container.innerHTML = `<p class="cv-item-meta">Could not load.</p>`;
+    }
+  }
+}
+
+function updateSectionToggleState(section) {
+  const boxes = document.querySelectorAll(`.cv-item-checkbox[data-section="${section}"]`);
+  const toggle = document.querySelector(`.cv-section-toggle[data-section="${section}"]`);
+  if (!toggle || !boxes.length) return;
+  toggle.checked = Array.from(boxes).every(b => b.checked);
+}
+
+document.querySelectorAll(".cv-section-toggle").forEach(toggle => {
+  toggle.addEventListener("change", () => {
+    const section = toggle.dataset.section;
+    document.querySelectorAll(`.cv-item-checkbox[data-section="${section}"]`).forEach(cb => {
+      cb.checked = toggle.checked;
+    });
+  });
+});
+
+$("cvSelectAllBtn").addEventListener("click", () => {
+  document.querySelectorAll(".cv-item-checkbox").forEach(cb => { cb.checked = true; });
+  document.querySelectorAll(".cv-section-toggle").forEach(t => { t.checked = true; });
+});
+
+$("cvClearAllBtn").addEventListener("click", () => {
+  document.querySelectorAll(".cv-item-checkbox").forEach(cb => { cb.checked = false; });
+  document.querySelectorAll(".cv-section-toggle").forEach(t => { t.checked = false; });
+});
+
+$("downloadCvBtn").addEventListener("click", () => {
+  $("cvError").textContent = "";
+  openModal("cvModalBackdrop");
+  loadCvSections();
+});
+
+$("cvGenerateBtn").addEventListener("click", async () => {
+  $("cvError").textContent = "";
+  const payload = {};
+  for (const key of Object.keys(CV_SECTIONS)) {
+    const ids = Array.from(document.querySelectorAll(`.cv-item-checkbox[data-section="${key}"]:checked`))
+      .map(cb => cb.dataset.id);
+    if (ids.length) payload[key] = ids;
+  }
+  if (Object.keys(payload).length === 0) {
+    $("cvError").textContent = "Select at least one item first.";
+    return;
+  }
+
+  $("cvGenerateBtn").textContent = "Generating..."; $("cvGenerateBtn").disabled = true;
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (authToken) headers["Authorization"] = "Bearer " + authToken;
+    const res = await fetch(API_BASE + "/cv/download", {
+      method: "POST", headers, body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Could not generate the CV.");
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "Md_Yeasin_CV.pdf";
+    document.body.appendChild(a); a.click(); a.remove();
+    window.URL.revokeObjectURL(url);
+    closeModal("cvModalBackdrop");
+  } catch (e) {
+    $("cvError").textContent = e.message;
+  } finally {
+    $("cvGenerateBtn").textContent = "Generate & Download"; $("cvGenerateBtn").disabled = false;
   }
 });
 
