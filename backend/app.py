@@ -1185,47 +1185,74 @@ JCR_LINE_SHORT_RE = re.compile(
 )
 
 
+PDF_CHUNK_SIZE = 50  # pages per pdfplumber.open() cycle — keeps memory bounded on low-RAM hosts
+
+
+def _iter_pdf_lines(pdf_path):
+    """
+    Yields every text line from every page of a PDF, processing pages in
+    small batches and re-opening the document between batches. This keeps
+    peak memory flat regardless of PDF size — pdfplumber otherwise
+    accumulates internal caches across the whole document that
+    page.flush_cache() alone doesn't fully release, which was blowing past
+    Render free tier's 512MB limit on large files (confirmed: ~530MB for a
+    43-page file without this, vs. ~190MB for a 731-page file with it).
+    """
+    import pdfplumber
+    import gc
+
+    with pdfplumber.open(pdf_path) as probe:
+        total_pages = len(probe.pages)
+
+    for start in range(0, total_pages, PDF_CHUNK_SIZE):
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages[start:start + PDF_CHUNK_SIZE]:
+                text = page.extract_text() or ""
+                page.flush_cache()
+                for line in text.split("\n"):
+                    yield line
+        gc.collect()
+
+
 def _parse_naas_pdf(file_stream):
     """Returns a list of {issn, jid, journal_name, naas_score} dicts."""
-    import pdfplumber
+    import tempfile
     results = []
-    with pdfplumber.open(file_stream) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text() or ""
-            for line in text.split("\n"):
-                m = NAAS_LINE_RE.match(line.strip())
-                if not m:
-                    continue
-                jid, issn, name, score = m.groups()
-                results.append({
-                    "issn": _norm_issn(issn), "jid": jid,
-                    "journal_name": name.strip(), "naas_score": score,
-                })
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+        file_stream.save(tmp.name)
+        for line in _iter_pdf_lines(tmp.name):
+            m = NAAS_LINE_RE.match(line.strip())
+            if not m:
+                continue
+            jid, issn, name, score = m.groups()
+            results.append({
+                "issn": _norm_issn(issn), "jid": jid,
+                "journal_name": name.strip(), "naas_score": score,
+            })
     return results
 
 
 def _parse_jcr_pdf(file_stream):
     """Returns a list of {issn, journal_name, impact_factor, quartile} dicts."""
-    import pdfplumber
+    import tempfile
     results = []
-    with pdfplumber.open(file_stream) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text() or ""
-            for line in text.split("\n"):
-                line = line.strip()
-                m = JCR_LINE_FULL_RE.match(line)
-                if m:
-                    name, issn, _index, _cit, jif_latest, _jif_prev, quartile = m.groups()
-                else:
-                    m = JCR_LINE_SHORT_RE.match(line)
-                    if not m:
-                        continue
-                    name, issn, _index, _cit, jif_latest, quartile = m.groups()
-                results.append({
-                    "issn": _norm_issn(issn), "journal_name": name.strip(),
-                    "impact_factor": jif_latest,
-                    "quartile": quartile if quartile != "N/A" else "",
-                })
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+        file_stream.save(tmp.name)
+        for line in _iter_pdf_lines(tmp.name):
+            line = line.strip()
+            m = JCR_LINE_FULL_RE.match(line)
+            if m:
+                name, issn, _index, _cit, jif_latest, _jif_prev, quartile = m.groups()
+            else:
+                m = JCR_LINE_SHORT_RE.match(line)
+                if not m:
+                    continue
+                name, issn, _index, _cit, jif_latest, quartile = m.groups()
+            results.append({
+                "issn": _norm_issn(issn), "journal_name": name.strip(),
+                "impact_factor": jif_latest,
+                "quartile": quartile if quartile != "N/A" else "",
+            })
     return results
 
 
