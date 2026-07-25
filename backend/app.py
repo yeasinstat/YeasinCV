@@ -1499,6 +1499,44 @@ def apply_journal_scores():
     return jsonify({"message": f"Refreshed Impact Factor/Quartile/NAAS on {updated} paper(s) from the journal scores table.", "papers_updated": updated})
 
 
+@app.route("/api/journal-scores/reset", methods=["POST"])
+@require_auth
+def reset_journal_scores():
+    """
+    Restores every paper's Impact Factor / Quartile back to the original
+    values from your CV (papers_seed.json), clears NAAS Score, and wipes
+    the journal_scores lookup table entirely. Use this before re-doing a
+    clean NAAS + JCR upload — without it, repeated uploads (especially ones
+    that were interrupted mid-way during earlier debugging) can leave a mix
+    of values from different runs instead of one clean, trustworthy set.
+    """
+    db = get_db()
+
+    with open(SEED_PATH, encoding="utf-8") as f:
+        seed_records = json.load(f)
+    by_title = {r["title"].strip().lower(): r for r in seed_records}
+
+    papers = db.execute("SELECT publication_id, title FROM papers").fetchall()
+    reset_count = 0
+    for p in papers:
+        seed = by_title.get((p["title"] or "").strip().lower())
+        if not seed:
+            continue
+        db.execute(
+            "UPDATE papers SET impact_factor = ?, quartile = ?, naas_score = '' WHERE publication_id = ?",
+            (seed.get("impact_factor", ""), seed.get("quartile", ""), p["publication_id"]),
+        )
+        reset_count += 1
+
+    db.execute("DELETE FROM journal_scores")
+    db.commit()
+
+    return jsonify({
+        "message": f"Reset {reset_count} paper(s) to their original CV values and cleared the journal scores table. Now re-upload NAAS, then JCR, for a clean result.",
+        "reset_count": reset_count,
+    })
+
+
 # ---------------------------------------------------------------------------
 # CV download — admin picks which sections to include (Publications,
 # Awards, Projects, Book Chapters, Software) and gets back a generated,

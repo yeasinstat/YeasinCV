@@ -328,6 +328,7 @@ function onAuthChange() {
   const visible = !!authToken;
   $("addPublicationBtn").classList.toggle("hidden", !visible);
   $("enrichAllBtn").classList.toggle("hidden", !visible);
+  $("resetScoresBtn").classList.toggle("hidden", !visible);
   $("uploadNaasBtn").classList.toggle("hidden", !visible);
   $("uploadJcrBtn").classList.toggle("hidden", !visible);
   $("downloadCvBtn").classList.toggle("hidden", !visible);
@@ -484,6 +485,21 @@ async function toggleHidden(id) {
 }
 
 // ---------------- journal scores upload (NAAS + JCR, separately) ----------------
+$("resetScoresBtn").addEventListener("click", async () => {
+  if (!confirm(
+    "This resets every paper's Impact Factor and Quartile back to the original values from the CV, " +
+    "clears all NAAS Scores, and wipes the journal scores table. Use this before re-doing a clean " +
+    "NAAS + JCR upload. Continue?"
+  )) return;
+  try {
+    const res = await api("/journal-scores/reset", { method: "POST" });
+    alert(res.message);
+    loadPapers(); loadFilterOptions(); loadStats();
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
 $("uploadNaasBtn").addEventListener("click", () => {
   $("naasError").textContent = ""; $("naasSuccess").textContent = "";
   openModal("naasModalBackdrop");
