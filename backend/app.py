@@ -240,6 +240,7 @@ BOOK_CHAPTERS_SEED_PATH = os.path.join(BASE_DIR, "book_chapters_seed.json")
 def init_db(force_reseed=False):
     fresh = not os.path.exists(DB_PATH)
     conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row  # supports both row[0] and row["col"] access
     # WAL mode lets read requests (like the status-polling endpoint) proceed
     # while a background job (like the JCR upload) is mid-write, instead of
     # blocking and risking "database is locked" — this setting is stored in
@@ -303,6 +304,9 @@ def init_db(force_reseed=False):
                 tuple(item.get(c, "") for c in cols),
             )
     conn.commit()
+
+    _load_journal_scores_snapshot(conn)
+
     conn.close()
 
 
@@ -811,6 +815,7 @@ def add_paper():
             )
             added.append(cur.lastrowid)
         db.commit()
+        _apply_journal_scores_to_papers(db)  # pick up IF/Quartile/NAAS if the journal is already in the lookup table
         return jsonify({"message": f"{len(added)} entr(y/ies) added.", "ids": added}), 201
 
     # plain field-based insert (manual admin form)
@@ -837,6 +842,7 @@ def add_paper():
         ),
     )
     db.commit()
+    _apply_journal_scores_to_papers(db)  # pick up IF/Quartile/NAAS if the journal is already in the lookup table
     return jsonify({"message": "Paper added.", "id": cur.lastrowid}), 201
 
 
@@ -1517,6 +1523,80 @@ def _apply_journal_scores_to_papers(db):
             updated += 1
     db.commit()
     return updated
+
+
+@app.route("/api/journal-scores/export-snapshot", methods=["GET"])
+@require_auth
+def export_journal_scores_snapshot():
+    """
+    Downloads the currently-loaded journal scores plus every paper's
+    resulting Impact Factor / Quartile / NAAS Score / ISSN as one JSON file.
+    Save this as backend/journal_scores_snapshot.json and commit it to your
+    repo — the server automatically reloads it on every startup (see
+    init_db), so your NAAS/JCR data survives future deploys on Render's free
+    tier instead of resetting each time. Re-export and re-commit whenever
+    you upload updated NAAS/JCR files (e.g. once a year).
+    """
+    db = get_db()
+    scores = db.execute("SELECT journal_name, issn, jid, impact_factor, naas_score, quartile FROM journal_scores").fetchall()
+    papers = db.execute(
+        "SELECT title, impact_factor, quartile, naas_score, issn FROM papers "
+        "WHERE impact_factor != '' OR quartile != '' OR naas_score != '' OR issn != ''"
+    ).fetchall()
+
+    snapshot = {
+        "journal_scores": [dict(r) for r in scores],
+        "paper_overrides": [dict(r) for r in papers],
+    }
+
+    from flask import Response
+    return Response(
+        json.dumps(snapshot, indent=2, ensure_ascii=False),
+        mimetype="application/json",
+        headers={"Content-Disposition": "attachment; filename=journal_scores_snapshot.json"},
+    )
+
+
+def _load_journal_scores_snapshot(conn):
+    """
+    If backend/journal_scores_snapshot.json exists (committed to the repo
+    via the export-snapshot endpoint), reload it into journal_scores and
+    re-apply it to papers. Runs on every startup — this is what makes
+    uploaded NAAS/JCR data survive a fresh Render deploy, since the repo
+    (unlike the runtime disk) isn't wiped between deploys.
+    """
+    snapshot_path = os.path.join(BASE_DIR, "journal_scores_snapshot.json")
+    if not os.path.exists(snapshot_path):
+        return
+
+    with open(snapshot_path, encoding="utf-8") as f:
+        snapshot = json.load(f)
+
+    for r in snapshot.get("journal_scores", []):
+        _upsert_journal_score(
+            conn, r.get("journal_name", ""), issn=r.get("issn", ""), jid=r.get("jid", ""),
+            impact_factor=r.get("impact_factor", ""), naas_score=r.get("naas_score", ""),
+            quartile=r.get("quartile", ""),
+        )
+    conn.commit()
+
+    by_title = {r["title"].strip().lower(): r for r in snapshot.get("paper_overrides", [])}
+    papers = conn.execute("SELECT publication_id, title FROM papers").fetchall()
+    for p in papers:
+        override = by_title.get((p["title"] or "").strip().lower())
+        if not override:
+            continue
+        conn.execute(
+            "UPDATE papers SET "
+            "impact_factor = COALESCE(NULLIF(?, ''), impact_factor), "
+            "quartile = COALESCE(NULLIF(?, ''), quartile), "
+            "naas_score = COALESCE(NULLIF(?, ''), naas_score), "
+            "issn = COALESCE(NULLIF(issn, ''), NULLIF(?, '')) "
+            "WHERE publication_id = ?",
+            (override.get("impact_factor", ""), override.get("quartile", ""),
+             override.get("naas_score", ""), override.get("issn", ""), p["publication_id"]),
+        )
+    conn.commit()
 
 
 @app.route("/api/journal-scores/apply", methods=["POST"])

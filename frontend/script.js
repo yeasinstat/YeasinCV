@@ -328,6 +328,7 @@ function onAuthChange() {
   const visible = !!authToken;
   $("addPublicationBtn").classList.toggle("hidden", !visible);
   $("enrichAllBtn").classList.toggle("hidden", !visible);
+  $("exportSnapshotBtn").classList.toggle("hidden", !visible);
   $("resetScoresBtn").classList.toggle("hidden", !visible);
   $("uploadNaasBtn").classList.toggle("hidden", !visible);
   $("uploadJcrBtn").classList.toggle("hidden", !visible);
@@ -485,6 +486,30 @@ async function toggleHidden(id) {
 }
 
 // ---------------- journal scores upload (NAAS + JCR, separately) ----------------
+$("exportSnapshotBtn").addEventListener("click", async () => {
+  try {
+    const headers = {};
+    if (authToken) headers["Authorization"] = "Bearer " + authToken;
+    const res = await fetch(API_BASE + "/journal-scores/export-snapshot", { headers });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Could not export the snapshot.");
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "journal_scores_snapshot.json";
+    document.body.appendChild(a); a.click(); a.remove();
+    window.URL.revokeObjectURL(url);
+    alert(
+      "Downloaded. Save this as backend/journal_scores_snapshot.json in your project, then commit and push it. " +
+      "The server will automatically reload it on every future startup, so this data survives redeploys."
+    );
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
 $("resetScoresBtn").addEventListener("click", async () => {
   if (!confirm(
     "This resets every paper's Impact Factor and Quartile back to the original values from the CV, " +
