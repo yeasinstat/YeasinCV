@@ -49,8 +49,11 @@ ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "borapushkar1999@gmail.com")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Pushkar@123")
 
 # In-memory OTP + session store (swap for Redis/DB in production)
-OTP_STORE = {}       # email -> {"otp": str, "expires": ts}
-SESSION_STORE = {}    # token -> {"email": str, "expires": ts}
+# Sessions and OTP codes now live in the database (sessions / otp_codes
+# tables) instead of in-memory dicts — this matters because free hosting
+# tiers like Render spin the server down after inactivity and restart it
+# on the next request, which would silently wipe any in-memory state and
+# log everyone out mid-session.
 OTP_TTL_SECONDS = 300      # 5 minutes
 SESSION_TTL_SECONDS = 3600  # 1 hour
 
@@ -154,6 +157,18 @@ CREATE TABLE IF NOT EXISTS journal_scores (
     quartile       TEXT DEFAULT '',
     year_updated   TEXT DEFAULT '',
     updated_at     TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token   TEXT PRIMARY KEY,
+    email   TEXT,
+    expires REAL
+);
+
+CREATE TABLE IF NOT EXISTS otp_codes (
+    email   TEXT PRIMARY KEY,
+    otp     TEXT,
+    expires REAL
 );
 """
 
@@ -483,8 +498,9 @@ def require_auth(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
         token = request.headers.get("Authorization", "").replace("Bearer ", "")
-        session = SESSION_STORE.get(token)
-        if not session or session["expires"] < time.time():
+        db = get_db()
+        row = db.execute("SELECT expires FROM sessions WHERE token = ?", (token,)).fetchone()
+        if not row or row["expires"] < time.time():
             return jsonify({"error": "Unauthorized. Please log in again."}), 401
         return f(*args, **kwargs)
     return wrapper
@@ -567,7 +583,13 @@ def login():
         return jsonify({"error": "Invalid email or password"}), 401
 
     otp = generate_otp()
-    OTP_STORE[email] = {"otp": otp, "expires": time.time() + OTP_TTL_SECONDS}
+    db = get_db()
+    db.execute(
+        "INSERT INTO otp_codes (email, otp, expires) VALUES (?,?,?) "
+        "ON CONFLICT(email) DO UPDATE SET otp=excluded.otp, expires=excluded.expires",
+        (email, otp, time.time() + OTP_TTL_SECONDS),
+    )
+    db.commit()
     try:
         delivered = send_otp_email(email, otp)
     except Exception as e:
@@ -588,22 +610,28 @@ def verify_otp():
     email = (data.get("email") or "").strip().lower()
     otp = (data.get("otp") or "").strip()
 
-    record = OTP_STORE.get(email)
+    db = get_db()
+    record = db.execute("SELECT otp, expires FROM otp_codes WHERE email = ?", (email,)).fetchone()
     if not record or record["expires"] < time.time():
         return jsonify({"error": "OTP expired. Please log in again."}), 400
     if record["otp"] != otp:
         return jsonify({"error": "Incorrect OTP."}), 400
 
-    del OTP_STORE[email]
+    db.execute("DELETE FROM otp_codes WHERE email = ?", (email,))
     token = generate_token()
-    SESSION_STORE[token] = {"email": email, "expires": time.time() + SESSION_TTL_SECONDS}
+    db.execute(
+        "INSERT INTO sessions (token, email, expires) VALUES (?,?,?)",
+        (token, email, time.time() + SESSION_TTL_SECONDS),
+    )
+    db.commit()
     return jsonify({"token": token, "message": "Login successful."})
 
 
 def is_admin_request():
     token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    session = SESSION_STORE.get(token)
-    return bool(session and session["expires"] >= time.time())
+    db = get_db()
+    row = db.execute("SELECT expires FROM sessions WHERE token = ?", (token,)).fetchone()
+    return bool(row and row["expires"] >= time.time())
 
 
 # ---------------------------------------------------------------------------
