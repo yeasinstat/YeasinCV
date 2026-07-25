@@ -518,17 +518,41 @@ $("jcrSubmit").addEventListener("click", async () => {
   if (!file) { $("jcrError").textContent = "Choose the JCR Impact Factor PDF first."; return; }
   const fd = new FormData();
   fd.append("file", file);
-  $("jcrSubmit").textContent = "Uploading (this can take a few minutes)..."; $("jcrSubmit").disabled = true;
+  $("jcrSubmit").textContent = "Starting..."; $("jcrSubmit").disabled = true;
   try {
-    const res = await apiUpload("/journal-scores/upload-jcr", fd);
-    $("jcrSuccess").textContent = res.message;
-    loadPapers(); loadFilterOptions(); loadStats();
+    const start = await apiUpload("/journal-scores/upload-jcr", fd);
+    $("jcrSuccess").textContent = "Processing in the background — this can take a few minutes. You can leave this open; it'll update automatically.";
+    await pollJcrJob(start.job_id);
   } catch (e) {
     $("jcrError").textContent = e.message;
-  } finally {
     $("jcrSubmit").textContent = "Upload & Apply"; $("jcrSubmit").disabled = false;
   }
 });
+
+async function pollJcrJob(jobId) {
+  const poll = async () => {
+    try {
+      const job = await api(`/journal-scores/upload-status/${jobId}`);
+      if (job.status === "processing") {
+        $("jcrSubmit").textContent = "Processing...";
+        setTimeout(poll, 4000);
+        return;
+      }
+      if (job.status === "error") {
+        $("jcrError").textContent = job.message;
+        $("jcrSuccess").textContent = "";
+      } else {
+        $("jcrSuccess").textContent = job.message;
+        loadPapers(); loadFilterOptions(); loadStats();
+      }
+      $("jcrSubmit").textContent = "Upload & Apply"; $("jcrSubmit").disabled = false;
+    } catch (e) {
+      $("jcrError").textContent = e.message;
+      $("jcrSubmit").textContent = "Upload & Apply"; $("jcrSubmit").disabled = false;
+    }
+  };
+  poll();
+}
 
 // ---------------- CV download ----------------
 const CV_SECTIONS = {

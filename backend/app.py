@@ -17,6 +17,8 @@ import sqlite3
 import random
 import string
 import time
+import threading
+import uuid
 from functools import wraps
 
 from flask import Flask, request, jsonify, g, send_from_directory
@@ -56,6 +58,11 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Pushkar@123")
 # log everyone out mid-session.
 OTP_TTL_SECONDS = 300      # 5 minutes
 SESSION_TTL_SECONDS = 3600  # 1 hour
+
+# Tracks background JCR-upload jobs: job_id -> {"status": ..., "message": ...}.
+# In-memory is fine here (unlike sessions) — if the server restarts mid-job,
+# the admin just re-uploads; nothing sensitive or hard to redo is lost.
+JCR_JOBS = {}
 
 
 # ---------------------------------------------------------------------------
@@ -1354,39 +1361,94 @@ def upload_naas_scores():
 @require_auth
 def upload_jcr_scores():
     """
-    Accepts the JCR 'Journal Impact Factor' PDF and loads it into
-    journal_scores. This file is very large (hundreds of pages) so this
-    request can take several minutes — that's expected, not a bug.
+    Accepts the JCR 'Journal Impact Factor' PDF (hundreds of pages, can take
+    several minutes to process) and runs the parsing/loading in a background
+    thread instead of one long HTTP request — this sidesteps every kind of
+    request-duration limit (gunicorn's own --timeout, and any proxy/load
+    balancer limit in front of it on hosts like Render) rather than trying
+    to out-guess how long is "long enough". The frontend polls
+    /api/journal-scores/upload-status/<job_id> for progress.
     """
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded (expected form field 'file')."}), 400
     file = request.files["file"]
 
+    import tempfile
+    tmp_fd = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    tmp_path = tmp_fd.name
+    tmp_fd.close()
+    file.save(tmp_path)
+
+    job_id = str(uuid.uuid4())
+    JCR_JOBS[job_id] = {"status": "processing", "message": "Parsing PDF... this can take a few minutes."}
+
+    thread = threading.Thread(target=_run_jcr_job, args=(job_id, tmp_path), daemon=True)
+    thread.start()
+
+    return jsonify({"job_id": job_id}), 202
+
+
+def _run_jcr_job(job_id, tmp_path):
+    import os
     try:
-        rows = _parse_jcr_pdf(file)
+        rows = []
+        for line in _iter_pdf_lines(tmp_path):
+            line = line.strip()
+            m = JCR_LINE_FULL_RE.match(line)
+            if m:
+                name, issn, _index, _cit, jif_latest, _jif_prev, quartile = m.groups()
+            else:
+                m = JCR_LINE_SHORT_RE.match(line)
+                if not m:
+                    continue
+                name, issn, _index, _cit, jif_latest, quartile = m.groups()
+            rows.append({
+                "issn": _norm_issn(issn), "journal_name": name.strip(),
+                "impact_factor": jif_latest,
+                "quartile": quartile if quartile != "N/A" else "",
+            })
+
+        if not rows:
+            JCR_JOBS[job_id] = {"status": "error", "message": "No journal rows could be parsed from this PDF. Is it the JCR Impact Factor list?"}
+            return
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        for r in rows:
+            _upsert_journal_score(conn, r["journal_name"], issn=r["issn"], impact_factor=r["impact_factor"], quartile=r["quartile"])
+        conn.commit()
+
+        naas_estimated = _apply_naas_fallback_formula(conn)
+        updated_papers = _apply_journal_scores_to_papers(conn)
+        conn.close()
+
+        JCR_JOBS[job_id] = {
+            "status": "done",
+            "message": (
+                f"Loaded {len(rows)} journal(s) from the JCR list. "
+                f"Estimated a NAAS score for {naas_estimated} journal(s) with no official NAAS rating. "
+                f"Updated {updated_papers} paper(s)."
+            ),
+            "loaded": len(rows),
+            "naas_estimated": naas_estimated,
+            "papers_updated": updated_papers,
+        }
     except Exception as e:
-        return jsonify({"error": f"Could not read the JCR PDF: {e}"}), 400
+        JCR_JOBS[job_id] = {"status": "error", "message": f"Could not process the JCR PDF: {e}"}
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
-    if not rows:
-        return jsonify({"error": "No journal rows could be parsed from this PDF. Is it the JCR Impact Factor list?"}), 400
 
-    db = get_db()
-    for r in rows:
-        _upsert_journal_score(db, r["journal_name"], issn=r["issn"], impact_factor=r["impact_factor"], quartile=r["quartile"])
-    db.commit()
-
-    naas_estimated = _apply_naas_fallback_formula(db)
-    updated_papers = _apply_journal_scores_to_papers(db)
-    return jsonify({
-        "message": (
-            f"Loaded {len(rows)} journal(s) from the JCR list. "
-            f"Estimated a NAAS score for {naas_estimated} journal(s) with no official NAAS rating. "
-            f"Updated {updated_papers} paper(s)."
-        ),
-        "loaded": len(rows),
-        "naas_estimated": naas_estimated,
-        "papers_updated": updated_papers,
-    })
+@app.route("/api/journal-scores/upload-status/<job_id>", methods=["GET"])
+@require_auth
+def jcr_upload_status(job_id):
+    job = JCR_JOBS.get(job_id)
+    if not job:
+        return jsonify({"error": "Unknown job (the server may have restarted since it started)."}), 404
+    return jsonify(job)
 
 
 def _apply_journal_scores_to_papers(db):
