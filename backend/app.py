@@ -71,7 +71,10 @@ JCR_JOBS = {}
 def get_db():
     db = getattr(g, "_database", None)
     if db is None:
-        db = g._database = sqlite3.connect(DB_PATH)
+        # timeout=30: if the DB is briefly locked (e.g. a background job like
+        # the JCR upload is mid-write), retry for up to 30s instead of
+        # immediately raising "database is locked".
+        db = g._database = sqlite3.connect(DB_PATH, timeout=30)
         db.row_factory = sqlite3.Row
     return db
 
@@ -237,6 +240,12 @@ BOOK_CHAPTERS_SEED_PATH = os.path.join(BASE_DIR, "book_chapters_seed.json")
 def init_db(force_reseed=False):
     fresh = not os.path.exists(DB_PATH)
     conn = sqlite3.connect(DB_PATH)
+    # WAL mode lets read requests (like the status-polling endpoint) proceed
+    # while a background job (like the JCR upload) is mid-write, instead of
+    # blocking and risking "database is locked" — this setting is stored in
+    # the database file itself, so it only needs to be set once, but it's
+    # harmless/idempotent to run on every startup.
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
     conn.commit()
     migrate_db(conn)  # safe no-op if columns already exist
@@ -1224,10 +1233,16 @@ def _iter_pdf_lines(pdf_path):
 def _parse_naas_pdf(file_stream):
     """Returns a list of {issn, jid, journal_name, naas_score} dicts."""
     import tempfile
+    import os
     results = []
-    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
-        file_stream.save(tmp.name)
-        for line in _iter_pdf_lines(tmp.name):
+    tmp_fd = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    tmp_path = tmp_fd.name
+    tmp_fd.close()  # release the handle before writing — NamedTemporaryFile keeps
+                     # its own handle open, which Windows won't let a second writer
+                     # (file_stream.save) touch; this bug never showed up on Linux/Render.
+    try:
+        file_stream.save(tmp_path)
+        for line in _iter_pdf_lines(tmp_path):
             m = NAAS_LINE_RE.match(line.strip())
             if not m:
                 continue
@@ -1236,16 +1251,25 @@ def _parse_naas_pdf(file_stream):
                 "issn": _norm_issn(issn), "jid": jid,
                 "journal_name": name.strip(), "naas_score": score,
             })
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
     return results
 
 
 def _parse_jcr_pdf(file_stream):
     """Returns a list of {issn, journal_name, impact_factor, quartile} dicts."""
     import tempfile
+    import os
     results = []
-    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
-        file_stream.save(tmp.name)
-        for line in _iter_pdf_lines(tmp.name):
+    tmp_fd = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    tmp_path = tmp_fd.name
+    tmp_fd.close()
+    try:
+        file_stream.save(tmp_path)
+        for line in _iter_pdf_lines(tmp_path):
             line = line.strip()
             m = JCR_LINE_FULL_RE.match(line)
             if m:
@@ -1260,6 +1284,11 @@ def _parse_jcr_pdf(file_stream):
                 "impact_factor": jif_latest,
                 "quartile": quartile if quartile != "N/A" else "",
             })
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
     return results
 
 
@@ -1412,7 +1441,7 @@ def _run_jcr_job(job_id, tmp_path):
             JCR_JOBS[job_id] = {"status": "error", "message": "No journal rows could be parsed from this PDF. Is it the JCR Impact Factor list?"}
             return
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30)
         conn.row_factory = sqlite3.Row
         for r in rows:
             _upsert_journal_score(conn, r["journal_name"], issn=r["issn"], impact_factor=r["impact_factor"], quartile=r["quartile"])
