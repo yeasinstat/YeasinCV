@@ -518,6 +518,7 @@ function onAuthChange() {
   const visible = !!authToken;
   $("addPublicationBtn").classList.toggle("hidden", !visible);
   $("enrichAllBtn").classList.toggle("hidden", !visible);
+  $("updateDownloadsBtn").classList.toggle("hidden", !visible);
   $("exportBackupBtn").classList.toggle("hidden", !visible);
   $("exportSnapshotBtn").classList.toggle("hidden", !visible);
   $("resetScoresBtn").classList.toggle("hidden", !visible);
@@ -656,6 +657,22 @@ $("enrichAllBtn").addEventListener("click", async () => {
   } finally {
     $("enrichAllBtn").textContent = "Enrich All (Crossref)";
     $("enrichAllBtn").disabled = false;
+  }
+});
+
+$("updateDownloadsBtn").addEventListener("click", async () => {
+  if (!confirm("Fetch the current all-time download count for every R package from CRAN's live download logs? This can take up to a minute.")) return;
+  $("updateDownloadsBtn").textContent = "Updating...";
+  $("updateDownloadsBtn").disabled = true;
+  try {
+    const res = await api("/software/update-downloads", { method: "POST" });
+    alert(res.message);
+    loadSection("software");
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    $("updateDownloadsBtn").textContent = "\u21BB Update Download Counts";
+    $("updateDownloadsBtn").disabled = false;
   }
 });
 
@@ -949,11 +966,11 @@ const RECORD_SCHEMAS = {
     idField: "project_id",
     label: "Project",
     fields: [
-      { key: "sl_no", label: "SL No." },
       { key: "investigators", label: "Investigators", full: true },
       { key: "project_title", label: "Project Title", full: true },
       { key: "funding_agency", label: "Funding Agency" },
       { key: "date_start", label: "Start Date" },
+      { key: "date_end", label: "End Date" },
       { key: "status", label: "Status" },
     ],
   },
@@ -963,6 +980,7 @@ const RECORD_SCHEMAS = {
     fields: [
       { key: "title", label: "Chapter Title", full: true },
       { key: "authors", label: "Authors", full: true },
+      { key: "editor", label: "Editor" },
       { key: "book_title", label: "Book Title" },
       { key: "publisher", label: "Publisher" },
       { key: "year", label: "Year" },
@@ -1016,7 +1034,7 @@ function renderProjects(items) {
       <div class="record-main">
         <h3 class="record-title">${escapeHtml(it.project_title)}</h3>
         <div class="record-meta">${escapeHtml(it.investigators)}</div>
-        <div class="record-meta">${escapeHtml(it.funding_agency)} &middot; Started ${escapeHtml(it.date_start)} &middot; ${escapeHtml(it.status)} ${recordTagsHtml(it)}</div>
+        <div class="record-meta">${escapeHtml(it.funding_agency)} &middot; Started ${escapeHtml(it.date_start)}${it.date_end ? " &middot; Ended " + escapeHtml(it.date_end) : ""} &middot; ${escapeHtml(it.status)} ${recordTagsHtml(it)}</div>
       </div>
       ${recordActionsHtml("projects", it.project_id, it.hidden)}
     </div>
@@ -1029,7 +1047,7 @@ function renderBookChapters(items) {
     <div class="record-entry" data-id="${it.book_chapter_id}">
       <div class="record-main">
         <h3 class="record-title">${escapeHtml(it.title)}</h3>
-        <div class="record-meta">${escapeHtml(it.authors)}</div>
+        <div class="record-meta">${escapeHtml(it.authors)}${it.editor ? " &middot; Editor: " + escapeHtml(it.editor) : ""}</div>
         <div class="record-meta">${escapeHtml(it.book_title)}${it.publisher ? ", " + escapeHtml(it.publisher) : ""} &middot; ${escapeHtml(it.year)}${it.pages ? " &middot; pp. " + escapeHtml(it.pages) : ""}${it.doi ? ` &middot; <a href="${it.doi.startsWith("http") ? it.doi : "https://doi.org/" + it.doi}" target="_blank" rel="noopener">${escapeHtml(it.doi)}</a>` : ""} ${recordTagsHtml(it)}</div>
       </div>
       ${recordActionsHtml("book-chapters", it.book_chapter_id, it.hidden)}

@@ -152,7 +152,10 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   <section class="section-panel hidden" id="section-software">
     <div class="section-header">
       <h2>Software / Packages</h2>
-      <button class="btn-ghost hidden add-record-btn" data-type="software">+ Add Package</button>
+      <div style="display:flex; gap:8px;">
+        <button class="btn-ghost hidden" id="updateDownloadsBtn">&#8635; Update Download Counts</button>
+        <button class="btn-ghost hidden add-record-btn" data-type="software">+ Add Package</button>
+      </div>
     </div>
     <div class="record-list" id="softwareList"></div>
   </section>

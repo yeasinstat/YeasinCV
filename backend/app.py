@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS projects (
     project_title   TEXT,
     funding_agency  TEXT,
     date_start      TEXT,
+    date_end        TEXT DEFAULT '',
     status          TEXT,
     hidden          INTEGER DEFAULT 0,
     created_at      TEXT DEFAULT (datetime('now'))
@@ -138,6 +139,7 @@ CREATE TABLE IF NOT EXISTS book_chapters (
     book_chapter_id INTEGER PRIMARY KEY AUTOINCREMENT,
     title           TEXT,
     authors         TEXT,
+    editor          TEXT DEFAULT '',
     book_title      TEXT,
     publisher       TEXT,
     year            TEXT,
@@ -236,6 +238,16 @@ def migrate_db(conn):
         conn.execute("ALTER TABLE papers ADD COLUMN selected INTEGER DEFAULT 0")
     conn.commit()
 
+    proj_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)")}
+    if "date_end" not in proj_cols:
+        conn.execute("ALTER TABLE projects ADD COLUMN date_end TEXT DEFAULT ''")
+    conn.commit()
+
+    bc_cols = {row[1] for row in conn.execute("PRAGMA table_info(book_chapters)")}
+    if "editor" not in bc_cols:
+        conn.execute("ALTER TABLE book_chapters ADD COLUMN editor TEXT DEFAULT ''")
+    conn.commit()
+
     js_cols = {row[1] for row in conn.execute("PRAGMA table_info(journal_scores)")}
     if "issn" not in js_cols:
         conn.execute("ALTER TABLE journal_scores ADD COLUMN issn TEXT DEFAULT ''")
@@ -303,8 +315,8 @@ def init_db(force_reseed=False):
     # rather than silently staying blank forever.
     for path, table, cols in [
         (AWARDS_SEED_PATH, "awards", ["title", "awarding_body", "year", "description"]),
-        (PROJECTS_SEED_PATH, "projects", ["sl_no", "investigators", "project_title", "funding_agency", "date_start", "status"]),
-        (BOOK_CHAPTERS_SEED_PATH, "book_chapters", ["title", "authors", "book_title", "publisher", "year", "pages", "isbn", "doi"]),
+        (PROJECTS_SEED_PATH, "projects", ["investigators", "project_title", "funding_agency", "date_start", "date_end", "status"]),
+        (BOOK_CHAPTERS_SEED_PATH, "book_chapters", ["title", "authors", "editor", "book_title", "publisher", "year", "pages", "isbn", "doi"]),
         (SOFTWARE_SEED_PATH, "software", ["package_name", "reference", "year", "downloads", "cran_url"]),
     ]:
         if not os.path.exists(path):
@@ -1138,6 +1150,57 @@ def _fetch_cran_metadata(cran_url: str):
     return {"package_name": pkg, "reference": reference, "year": year}
 
 
+def _fetch_cran_downloads(package_name: str):
+    """
+    Returns the all-time total download count for a CRAN package (int),
+    or None if it can't be fetched. Uses the same official RStudio/R-hub
+    CRAN download-logs API (cranlogs.r-pkg.org) that CRAN's own "grand
+    total downloads" badges use — total since October 2012, when this
+    logging began.
+    """
+    import urllib.request
+    import urllib.parse
+    import datetime
+
+    if not package_name:
+        return None
+    today = datetime.date.today().isoformat()
+    pkg = urllib.parse.quote(package_name)
+    url = f"https://cranlogs.r-pkg.org/downloads/total/2012-10-01:{today}/{pkg}"
+    req = urllib.request.Request(url, headers={"User-Agent": "AcademicIMS/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if isinstance(data, list) and data and "downloads" in data[0]:
+            return int(data[0]["downloads"])
+    except Exception:
+        pass
+    return None
+
+
+@app.route("/api/software/update-downloads", methods=["POST"])
+@require_auth
+def update_software_downloads():
+    """Refreshes the Downloads count for every software package from CRAN's live download logs."""
+    db = get_db()
+    rows = db.execute("SELECT software_id, package_name FROM software WHERE package_name != ''").fetchall()
+    updated, failed = 0, 0
+    for r in rows:
+        count = _fetch_cran_downloads(r["package_name"])
+        if count is not None:
+            db.execute("UPDATE software SET downloads = ? WHERE software_id = ?", (f"{count:,}", r["software_id"]))
+            updated += 1
+        else:
+            failed += 1
+        time.sleep(0.3)  # be polite to the public API
+    db.commit()
+    return jsonify({
+        "message": f"Updated download counts for {updated} package(s)." + (f" {failed} could not be fetched." if failed else ""),
+        "updated": updated,
+        "failed": failed,
+    })
+
+
 SIMPLE_TABLES = {
     "awards": {
         "id_col": "award_id",
@@ -1146,13 +1209,13 @@ SIMPLE_TABLES = {
     },
     "projects": {
         "id_col": "project_id",
-        "columns": ["sl_no", "investigators", "project_title", "funding_agency", "date_start", "status"],
+        "columns": ["investigators", "project_title", "funding_agency", "date_start", "date_end", "status"],
         "order_by": "date_start DESC",
     },
     "book-chapters": {
         "table": "book_chapters",
         "id_col": "book_chapter_id",
-        "columns": ["title", "authors", "book_title", "publisher", "year", "pages", "isbn", "doi"],
+        "columns": ["title", "authors", "editor", "book_title", "publisher", "year", "pages", "isbn", "doi"],
         "order_by": "year DESC",
     },
     "software": {
