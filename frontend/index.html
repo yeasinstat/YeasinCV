@@ -35,7 +35,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
 <!-- Navigation tabs -->
 <nav class="section-nav" id="sectionNav">
   <button class="nav-tab active" data-section="home">Home</button>
-  <button class="nav-tab" data-section="publications">Publications</button>
+  <button class="nav-tab" data-section="publications">Research Paper</button>
   <button class="nav-tab" data-section="awards">Awards</button>
   <button class="nav-tab" data-section="projects">Projects</button>
   <button class="nav-tab" data-section="book-chapters">Book Chapters</button>
@@ -51,16 +51,21 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
     </div>
   </section>
 
-  <!-- ============ PUBLICATIONS ============ -->
+  <!-- ============ RESEARCH PAPER ============ -->
   <section class="section-panel hidden" id="section-publications">
     <section class="hero">
       <div class="hero-header">
-        <h2>Publication Records</h2>
+        <h2>Research Paper Records</h2>
         <button class="btn-ghost hidden" id="addPublicationBtn">+ Add Publication</button>
       </div>
       <p class="hero-sub">Peer-reviewed journal articles, indexed by year, journal, quartile and research domain.</p>
       <div class="stat-row" id="statRow"></div>
     </section>
+
+    <div class="pub-subtabs">
+      <button class="pub-subtab active" data-subtab="all">All</button>
+      <button class="pub-subtab" data-subtab="selected">Selected</button>
+    </div>
 
     <section class="controls">
       <div class="control-group">

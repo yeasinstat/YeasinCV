@@ -191,6 +191,40 @@ main { max-width: 1080px; margin: 0 auto; padding: 0 32px 80px; }
 
 .admin-actions { display: none; gap: 6px; }
 .admin-actions.visible { display: flex; }
+
+/* ---------------- Research Paper sub-tabs (All / Selected) ---------------- */
+.pub-subtabs {
+  display: flex; gap: 4px;
+  padding: 14px 0 0;
+  border-bottom: 1px solid var(--line);
+}
+.pub-subtab {
+  background: none; border: none;
+  padding: 8px 16px;
+  font-family: var(--font-sans); font-size: 0.82rem; font-weight: 600;
+  color: var(--slate); cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.pub-subtab.active { color: var(--olive-dark); border-bottom-color: var(--olive-dark); }
+.pub-subtab:hover { color: var(--ink); }
+
+/* Select-star toggle icon on each paper card (admin only) */
+.select-star-btn {
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  border-radius: 3px;
+  font-size: 0.9rem;
+  padding: 3px 8px;
+  cursor: pointer;
+  color: var(--slate-light);
+  line-height: 1;
+}
+.select-star-btn.is-selected { color: #C9A227; border-color: #C9A227; background: #FBF6E3; }
+.select-star-btn:hover { border-color: var(--olive-dark); }
+
+.tag-selected { background: #FBF6E3; color: #8A6D00; }
+
 .icon-btn {
   border: 1px solid var(--line);
   background: var(--paper-raised);

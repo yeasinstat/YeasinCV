@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS papers (
     abstract             TEXT DEFAULT '',
     keywords             TEXT DEFAULT '',
     naas_score           TEXT DEFAULT '',
+    selected             INTEGER DEFAULT 0,
     created_at           TEXT DEFAULT (datetime('now'))
 );
 
@@ -229,6 +230,10 @@ def migrate_db(conn):
 
     if "naas_score" not in existing:
         conn.execute("ALTER TABLE papers ADD COLUMN naas_score TEXT DEFAULT ''")
+    conn.commit()
+
+    if "selected" not in existing:
+        conn.execute("ALTER TABLE papers ADD COLUMN selected INTEGER DEFAULT 0")
     conn.commit()
 
     js_cols = {row[1] for row in conn.execute("PRAGMA table_info(journal_scores)")}
@@ -803,6 +808,7 @@ def add_paper():
         bib_db = bibtexparser.loads(data["bibtex"])
         if not bib_db.entries:
             return jsonify({"error": "Could not parse any entries from the BibTeX provided."}), 400
+        pre_selected = 1 if data.get("selected") else 0
         added = []
         for entry in bib_db.entries:
             title = entry.get("title", "").strip("{}")
@@ -819,12 +825,12 @@ def add_paper():
                 """INSERT INTO papers
                 (complete_reference, title, authors, author_position, year,
                  journal, publisher, issn, doi, article_type, impact_factor,
-                 quartile, domain, field, hidden, abstract, keywords)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
+                 quartile, domain, field, hidden, selected, abstract, keywords)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?)""",
                 (
                     f"{authors} ({year}). {title}. {journal}.",
                     title, authors, "", year, journal, publisher, issn, doi,
-                    entry.get("ENTRYTYPE", "article"), "", "", domain, field, "", "",
+                    entry.get("ENTRYTYPE", "article"), "", "", domain, field, pre_selected, "", "",
                 ),
             )
             added.append(cur.lastrowid)
@@ -843,8 +849,8 @@ def add_paper():
         """INSERT INTO papers
         (complete_reference, title, authors, author_position, year, journal,
          publisher, issn, doi, article_type, impact_factor, quartile, domain,
-         field, hidden, abstract, keywords)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
+         field, hidden, selected, abstract, keywords)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?)""",
         (
             data.get("complete_reference", ""), data.get("title", ""),
             data.get("authors", ""), data.get("author_position", ""),
@@ -852,7 +858,7 @@ def add_paper():
             data.get("publisher", ""), data.get("issn", ""),
             data.get("doi", ""), data.get("article_type", "Research Article"),
             data.get("impact_factor", ""), data.get("quartile", ""), domain,
-            field, data.get("abstract", ""), data.get("keywords", ""),
+            field, 1 if data.get("selected") else 0, data.get("abstract", ""), data.get("keywords", ""),
         ),
     )
     db.commit()
@@ -909,6 +915,20 @@ def toggle_paper_hidden(pub_id):
     db.execute("UPDATE papers SET hidden = ? WHERE publication_id = ?", (new_val, pub_id))
     db.commit()
     return jsonify({"message": "Paper hidden." if new_val else "Paper visible again.", "hidden": bool(new_val)})
+
+
+@app.route("/api/papers/<int:pub_id>/toggle-selected", methods=["POST"])
+@require_auth
+def toggle_paper_selected(pub_id):
+    """Toggles whether a paper appears in the 'Selected' view. Every paper always stays in 'All' regardless."""
+    db = get_db()
+    row = db.execute("SELECT selected FROM papers WHERE publication_id = ?", (pub_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "Paper not found."}), 404
+    new_val = 0 if row["selected"] else 1
+    db.execute("UPDATE papers SET selected = ? WHERE publication_id = ?", (new_val, pub_id))
+    db.commit()
+    return jsonify({"message": "Added to Selected." if new_val else "Removed from Selected.", "selected": bool(new_val)})
 
 
 @app.route("/api/papers/<int:pub_id>/enrich", methods=["POST"])

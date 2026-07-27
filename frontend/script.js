@@ -350,6 +350,8 @@ async function loadStats() {
   }
 }
 
+let currentPubSubtab = "all"; // "all" | "selected"
+
 async function loadPapers() {
   const meta = $("resultsMeta");
   meta.textContent = "Loading...";
@@ -357,18 +359,33 @@ async function loadPapers() {
     const query = buildQuery();
     const papers = await api("/papers?" + query);
     currentPapers = papers;
-    renderPapers(papers);
-    meta.textContent = `${papers.length} publication${papers.length !== 1 ? "s" : ""} found`;
+    const shown = currentPubSubtab === "selected" ? papers.filter(p => p.selected) : papers;
+    renderPapers(shown);
+    meta.textContent = `${shown.length} publication${shown.length !== 1 ? "s" : ""} found`;
   } catch (e) {
     $("paperList").innerHTML = `<div class="empty-state">Could not load records. Is the backend running at ${API_BASE}?</div>`;
     meta.textContent = "";
   }
 }
 
+document.querySelectorAll(".pub-subtab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".pub-subtab").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    currentPubSubtab = tab.dataset.subtab;
+    const shown = currentPubSubtab === "selected" ? currentPapers.filter(p => p.selected) : currentPapers;
+    renderPapers(shown);
+    $("resultsMeta").textContent = `${shown.length} publication${shown.length !== 1 ? "s" : ""} found`;
+  });
+});
+
 function renderPapers(papers) {
   const list = $("paperList");
   if (!papers.length) {
-    list.innerHTML = `<div class="empty-state">No publications match these filters.</div>`;
+    const emptyMsg = currentPubSubtab === "selected"
+      ? `No papers selected yet. Use the &#9733; star button on a paper in "All" to feature it here.`
+      : "No publications match these filters.";
+    list.innerHTML = `<div class="empty-state">${emptyMsg}</div>`;
     return;
   }
   list.innerHTML = papers.map((p, i) => {
@@ -386,6 +403,7 @@ function renderPapers(papers) {
           ${p.quartile ? `<span class="tag tag-quartile-${p.quartile}">${escapeHtml(p.quartile)}</span>` : ""}
           ${p.naas_score ? `<span class="tag tag-naas">NAAS ${escapeHtml(p.naas_score)}</span>` : ""}
           ${p.hidden ? `<span class="tag tag-hidden">Hidden</span>` : ""}
+          ${p.selected ? `<span class="tag tag-selected">&#9733; Selected</span>` : ""}
           ${p.issn ? `<span class="paper-doi">ISSN ${escapeHtml(p.issn)}</span>` : ""}
           ${p.doi ? `<span class="paper-doi"><a href="${p.doi.startsWith("http") ? p.doi : "https://doi.org/" + p.doi}" target="_blank" rel="noopener">${escapeHtml(p.doi)}</a></span>` : ""}
         </div>
@@ -394,6 +412,7 @@ function renderPapers(papers) {
         <div class="paper-year">${escapeHtml(p.year || "—")}</div>
         ${p.impact_factor ? `<div class="paper-if">IF ${escapeHtml(p.impact_factor)}</div>` : ""}
         <div class="admin-actions ${authToken ? "visible" : ""}">
+          <button class="select-star-btn ${p.selected ? "is-selected" : ""}" data-toggle-selected="${p.publication_id}" title="${p.selected ? "Remove from Selected" : "Add to Selected"}">&#9733;</button>
           <button class="icon-btn" data-edit="${p.publication_id}">Edit</button>
           <button class="icon-btn" data-toggle-hidden="${p.publication_id}">${p.hidden ? "Show" : "Hide"}</button>
           <button class="icon-btn danger" data-delete="${p.publication_id}">Delete</button>
@@ -405,6 +424,16 @@ function renderPapers(papers) {
   list.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", () => openEditModal(b.dataset.edit)));
   list.querySelectorAll("[data-delete]").forEach(b => b.addEventListener("click", () => deletePaper(b.dataset.delete)));
   list.querySelectorAll("[data-toggle-hidden]").forEach(b => b.addEventListener("click", () => toggleHidden(b.dataset.toggleHidden)));
+  list.querySelectorAll("[data-toggle-selected]").forEach(b => b.addEventListener("click", () => toggleSelected(b.dataset.toggleSelected)));
+}
+
+async function toggleSelected(id) {
+  try {
+    await api(`/papers/${id}/toggle-selected`, { method: "POST" });
+    await loadPapers();
+  } catch (e) {
+    alert(e.message);
+  }
 }
 
 ["fJournal", "fQuartile", "fField", "fSort"].forEach(id => {
@@ -516,7 +545,7 @@ document.querySelectorAll(".tab").forEach(tab => {
 $("bibtexSubmit").addEventListener("click", async () => {
   $("addError").textContent = ""; $("addSuccess").textContent = "";
   try {
-    const res = await api("/papers", { method: "POST", body: JSON.stringify({ bibtex: $("bibtexInput").value }) });
+    const res = await api("/papers", { method: "POST", body: JSON.stringify({ bibtex: $("bibtexInput").value, selected: currentPubSubtab === "selected" }) });
     $("addSuccess").textContent = res.message;
     $("bibtexInput").value = "";
     loadPapers(); loadFilterOptions(); loadStats();
@@ -531,7 +560,7 @@ $("manualSubmit").addEventListener("click", async () => {
     title: $("mTitle").value, authors: $("mAuthors").value, year: $("mYear").value,
     journal: $("mJournal").value, publisher: $("mPublisher").value, issn: $("mIssn").value,
     doi: $("mDoi").value, article_type: $("mType").value, impact_factor: $("mIF").value,
-    quartile: $("mQuartile").value,
+    quartile: $("mQuartile").value, selected: currentPubSubtab === "selected",
   };
   payload.complete_reference = `${payload.authors} (${payload.year}). ${payload.title}. ${payload.journal}.`;
   try {
