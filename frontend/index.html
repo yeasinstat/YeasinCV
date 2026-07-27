@@ -17,6 +17,7 @@
       <div class="scientist-role">Scientist &middot; ICAR-IASRI, New Delhi</div>
     </div>
     <button class="btn-ghost hidden" id="downloadCvBtn">Download CV</button>
+    <button class="btn-ghost hidden" id="exportBackupBtn">Export Full Database Backup</button>
     <button class="btn-ghost hidden" id="exportSnapshotBtn">Export Journal Scores Snapshot</button>
     <button class="btn-ghost hidden" id="resetScoresBtn">Reset Journal Scores</button>
     <button class="btn-ghost hidden" id="uploadNaasBtn">Upload NAAS Scores</button>
@@ -40,49 +41,9 @@
 
   <!-- ============ HOME ============ -->
   <section class="section-panel" id="section-home">
-    <section class="profile" id="profileSection">
-      <div class="profile-inner">
-        <div class="profile-photo-col">
-          <img src="yeasin-photo.png" alt="Photo of Dr. Md Yeasin" class="profile-photo">
-          <div class="profile-links" id="pLinks">
-            <a href="https://scholar.google.com/citations?user=xejMKD0AAAAJ&hl=en&oi=sra" target="_blank" rel="noopener" class="profile-link-btn">Google Scholar</a>
-            <a href="https://www.linkedin.com/in/dr-yeasin/" target="_blank" rel="noopener" class="profile-link-btn">LinkedIn</a>
-          </div>
-        </div>
-
-        <div class="profile-main">
-          <h1 id="pName">Dr. Md Yeasin</h1>
-          <p class="profile-role" id="pRole">Scientist &middot; ICAR-IASRI, New Delhi - 110012</p>
-          <p class="profile-address" id="pAddress"></p>
-          <div class="profile-contact" id="pContact"></div>
-
-          <h3>Research Interest</h3>
-          <p class="profile-interest" id="pInterest"></p>
-
-          <div class="profile-columns">
-            <div>
-              <h3>Education</h3>
-              <ul class="profile-list" id="pEducation"></ul>
-            </div>
-            <div>
-              <h3>Academic Accolades</h3>
-              <ul class="profile-list" id="pAccolades"></ul>
-            </div>
-          </div>
-
-          <div class="profile-columns">
-            <div>
-              <h3>Employment</h3>
-              <ul class="profile-list" id="pEmployment"></ul>
-            </div>
-            <div>
-              <h3>Other Records</h3>
-              <ul class="profile-list" id="pOtherRecords"></ul>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
+    <div class="profile-blocks" id="profileBlocks">
+      <!-- Blocks are rendered dynamically by JS based on layout config -->
+    </div>
   </section>
 
   <!-- ============ PUBLICATIONS ============ -->
@@ -385,6 +346,7 @@
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.6/Sortable.min.js"></script>
 <script src="script.js"></script>
 </body>
 </html>

@@ -11,6 +11,7 @@ Everything runs from ONE server, ONE port, ONE terminal:
     http://localhost:5000/api/*  -> the API (backend)
 """
 import os
+import shutil
 import re
 import json
 import sqlite3
@@ -180,6 +181,11 @@ CREATE TABLE IF NOT EXISTS otp_codes (
     otp     TEXT,
     expires REAL
 );
+
+CREATE TABLE IF NOT EXISTS profile_layout (
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    config  TEXT DEFAULT '{}'
+);
 """
 
 
@@ -237,8 +243,16 @@ AWARDS_SEED_PATH = os.path.join(BASE_DIR, "awards_seed.json")
 BOOK_CHAPTERS_SEED_PATH = os.path.join(BASE_DIR, "book_chapters_seed.json")
 
 
+DB_BACKUP_PATH = os.path.join(BASE_DIR, "research_backup.db")
+
+
 def init_db(force_reseed=False):
     fresh = not os.path.exists(DB_PATH)
+
+    restored_from_backup = fresh and os.path.exists(DB_BACKUP_PATH)
+    if restored_from_backup:
+        shutil.copyfile(DB_BACKUP_PATH, DB_PATH)
+
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row  # supports both row[0] and row["col"] access
     # WAL mode lets read requests (like the status-polling endpoint) proceed
@@ -251,7 +265,7 @@ def init_db(force_reseed=False):
     conn.commit()
     migrate_db(conn)  # safe no-op if columns already exist
 
-    if fresh or force_reseed:
+    if (fresh and not restored_from_backup) or force_reseed:
         if force_reseed:
             conn.execute("DELETE FROM papers")
 
@@ -986,6 +1000,30 @@ def scientist_info():
     return jsonify(SCIENTIST_PROFILE)
 
 
+@app.route("/api/profile-layout", methods=["GET"])
+def get_profile_layout():
+    db = get_db()
+    row = db.execute("SELECT config FROM profile_layout WHERE id = 1").fetchone()
+    if row:
+        return jsonify(json.loads(row["config"]))
+    return jsonify({})
+
+
+@app.route("/api/profile-layout", methods=["PUT"])
+@require_auth
+def save_profile_layout():
+    data = request.get_json(force=True)
+    db = get_db()
+    config_json = json.dumps(data)
+    db.execute(
+        "INSERT INTO profile_layout (id, config) VALUES (1, ?) "
+        "ON CONFLICT(id) DO UPDATE SET config = excluded.config",
+        (config_json,),
+    )
+    db.commit()
+    return jsonify({"message": "Layout saved."})
+
+
 SCIENTIST_PROFILE = {
     "name": "Dr. Md Yeasin",
     "designation": "Scientist",
@@ -1523,6 +1561,33 @@ def _apply_journal_scores_to_papers(db):
             updated += 1
     db.commit()
     return updated
+
+
+@app.route("/api/database/export-backup", methods=["GET"])
+@require_auth
+def export_database_backup():
+    """
+    Downloads a complete, self-contained copy of the live database — every
+    publication, award, project, book chapter, software entry, hidden flag,
+    and journal score, exactly as it currently stands. Save this as
+    backend/research_backup.db and commit it to your repo: on the next
+    deploy (a fresh, empty disk), the server automatically restores from
+    this file instead of reseeding from scratch, so nothing is lost — not
+    just NAAS/JCR data, but any admin edit at all. This is the more
+    complete alternative to the journal-scores-only snapshot.
+    """
+    db = get_db()
+    # Merge the WAL file into the main database file so the exported copy
+    # is complete and self-contained — without this, recent writes could
+    # still be sitting only in research.db-wal and get left out.
+    db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    db.commit()
+
+    from flask import send_file
+    return send_file(
+        DB_PATH, mimetype="application/octet-stream", as_attachment=True,
+        download_name="research_backup.db",
+    )
 
 
 @app.route("/api/journal-scores/export-snapshot", methods=["GET"])

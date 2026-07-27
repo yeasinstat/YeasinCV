@@ -46,36 +46,195 @@ function escapeHtml(str) {
 }
 
 // ---------------- profile ----------------
+// ============ Profile Blocks System ============
+const DEFAULT_BLOCK_ORDER = ["header", "contact", "research_interest", "education", "accolades", "employment", "other_records"];
+let profileLayout = {}; // { block_order: [...], hidden_blocks: [...], items: { education: { order: [...], hidden: [...] } } }
+let scientistData = null;
+
 async function loadProfile() {
   try {
-    const s = await api("/scientist");
+    scientistData = await api("/scientist");
+    const s = scientistData;
     $("scientistCard").querySelector(".scientist-name").textContent = s.name;
     $("scientistCard").querySelector(".scientist-role").textContent =
       `${s.designation} · ${s.institute.split("(")[1]?.replace(")", "") || s.institute}`;
 
-    $("pName").textContent = s.name;
-    $("pRole").textContent = `${s.designation} · ${s.institute}`;
-    $("pAddress").textContent = s.address || "";
-    const contactBits = [];
-    if (s.dob) contactBits.push(`DOB: ${s.dob}`);
-    if (s.mobile && s.mobile.length) contactBits.push(`Mobile: ${s.mobile.join(" / ")}`);
-    if (s.email && s.email.length) contactBits.push(`Email: ${s.email.join(", ")}`);
-    $("pContact").innerHTML = contactBits.map(b => `<span>${escapeHtml(b)}</span>`).join("");
-    $("pInterest").textContent = s.research_interest || "";
+    try { profileLayout = await api("/profile-layout"); } catch { profileLayout = {}; }
+    renderProfileBlocks();
+  } catch (e) { /* backend not reachable yet */ }
+}
 
-    $("pEducation").innerHTML = (s.education || [])
-      .map(e => `<li><strong>${escapeHtml(e.degree)}</strong> (${escapeHtml(e.year)}) &middot; ${escapeHtml(e.institution)}</li>`)
-      .join("");
-    $("pAccolades").innerHTML = (s.accolades || [])
-      .map(a => `<li>${escapeHtml(a)}</li>`)
-      .join("");
-    $("pEmployment").innerHTML = (s.employment || [])
-      .map(e => `<li><strong>${escapeHtml(e.period)}</strong> &middot; ${escapeHtml(e.role)}, ${escapeHtml(e.institution)}</li>`)
-      .join("");
-    $("pOtherRecords").innerHTML = (s.other_records || [])
-      .map(r => `<li>${escapeHtml(r)}</li>`)
-      .join("");
-  } catch (e) { /* backend not reachable yet — keep defaults */ }
+function renderProfileBlocks() {
+  const s = scientistData;
+  if (!s) return;
+  const container = $("profileBlocks");
+  const isAdmin = !!authToken;
+  const blockOrder = profileLayout.block_order || DEFAULT_BLOCK_ORDER;
+  const hiddenBlocks = new Set(profileLayout.hidden_blocks || []);
+  const items = profileLayout.items || {};
+
+  const blockRenderers = {
+    header: () => {
+      const inner = `
+        <div class="block-header-inner">
+          <div class="block-photo-col">
+            <img src="yeasin-photo.png" alt="Photo of ${escapeHtml(s.name)}" class="block-photo">
+            <div class="block-links">
+              <a href="https://scholar.google.com/citations?user=xejMKD0AAAAJ&hl=en&oi=sra" target="_blank" rel="noopener" class="block-link-btn">Google Scholar</a>
+              <a href="https://www.linkedin.com/in/dr-yeasin/" target="_blank" rel="noopener" class="block-link-btn">LinkedIn</a>
+            </div>
+          </div>
+          <div>
+            <h1 class="block-name">${escapeHtml(s.name)}</h1>
+            <p class="block-role">${escapeHtml(s.designation)} &middot; ${escapeHtml(s.institute)}</p>
+            <p class="block-address">${escapeHtml(s.address || "")}</p>
+          </div>
+        </div>`;
+      return { title: "", html: inner };
+    },
+
+    contact: () => {
+      const parts = [];
+      if (s.dob) parts.push(`<div class="block-contact-item"><span class="block-contact-label">DOB</span><span class="block-contact-value">${escapeHtml(s.dob)}</span></div>`);
+      if (s.mobile?.length) parts.push(`<div class="block-contact-item"><span class="block-contact-label">Mobile</span><span class="block-contact-value">${s.mobile.map(escapeHtml).join(" / ")}</span></div>`);
+      if (s.email?.length) parts.push(`<div class="block-contact-item"><span class="block-contact-label">Email</span><span class="block-contact-value">${s.email.map(escapeHtml).join(", ")}</span></div>`);
+      return { title: "Contact", html: `<div class="block-contact-grid">${parts.join("")}</div>` };
+    },
+
+    research_interest: () => ({
+      title: "Research Interest",
+      html: `<p class="block-interest-text">${escapeHtml(s.research_interest || "")}</p>`
+    }),
+
+    education: () => renderListBlock("Education", s.education || [], "education",
+      e => `<strong>${escapeHtml(e.degree)}</strong> (${escapeHtml(e.year)}) &middot; ${escapeHtml(e.institution)}`),
+
+    accolades: () => renderListBlock("Academic Accolades", s.accolades || [], "accolades",
+      a => escapeHtml(a)),
+
+    employment: () => renderListBlock("Employment", s.employment || [], "employment",
+      e => `<strong>${escapeHtml(e.period)}</strong> &middot; ${escapeHtml(e.role)}, ${escapeHtml(e.institution)}`),
+
+    other_records: () => renderListBlock("Other Records", s.other_records || [], "other_records",
+      r => escapeHtml(r)),
+  };
+
+  function renderListBlock(title, dataItems, key, renderFn) {
+    const itemConfig = items[key] || {};
+    const order = itemConfig.order || dataItems.map((_, i) => i);
+    const hiddenItems = new Set(itemConfig.hidden || []);
+
+    const listHtml = order.map(idx => {
+      if (idx >= dataItems.length) return "";
+      const hidden = hiddenItems.has(idx);
+      if (hidden && !isAdmin) return "";
+      return `<li class="block-list-item${hidden ? " item-hidden" : ""}" data-item-idx="${idx}">
+        <span class="item-drag-handle" title="Drag to reorder">⠿</span>
+        <span class="item-text">${renderFn(dataItems[idx])}</span>
+        <button class="item-toggle-btn" data-block="${key}" data-idx="${idx}">${hidden ? "Show" : "Hide"}</button>
+      </li>`;
+    }).join("");
+
+    return { title, html: `<ul class="block-list" data-block-key="${key}">${listHtml}</ul>` };
+  }
+
+  let html = "";
+  for (const blockId of blockOrder) {
+    const renderer = blockRenderers[blockId];
+    if (!renderer) continue;
+    const isHidden = hiddenBlocks.has(blockId);
+    if (isHidden && !isAdmin) continue;
+    const { title, html: content } = renderer();
+
+    html += `<div class="profile-block${isHidden ? " block-hidden" : ""}" data-block-id="${blockId}">
+      ${title || isAdmin ? `<div class="profile-block-header">
+        <h3 class="profile-block-title">${escapeHtml(title)}</h3>
+        <div class="profile-block-admin">
+          <span class="block-drag-handle" title="Drag to reorder">⠿</span>
+          <button class="block-toggle-btn" data-block="${blockId}">${isHidden ? "Show" : "Hide"}</button>
+        </div>
+      </div>` : ""}
+      ${content}
+    </div>`;
+  }
+  container.innerHTML = html;
+
+  // Add admin-logged-in class for CSS-based admin control visibility
+  document.body.classList.toggle("admin-logged-in", isAdmin);
+
+  // Wire up block hide/show buttons
+  container.querySelectorAll(".block-toggle-btn").forEach(btn => {
+    btn.addEventListener("click", () => toggleBlock(btn.dataset.block));
+  });
+
+  // Wire up item hide/show buttons
+  container.querySelectorAll(".item-toggle-btn").forEach(btn => {
+    btn.addEventListener("click", () => toggleItem(btn.dataset.block, parseInt(btn.dataset.idx)));
+  });
+
+  // Initialize drag-and-drop for blocks
+  if (isAdmin && typeof Sortable !== "undefined") {
+    new Sortable(container, {
+      animation: 200,
+      handle: ".block-drag-handle",
+      ghostClass: "sortable-ghost",
+      dragClass: "sortable-drag",
+      onEnd: () => saveBlockOrder(),
+    });
+
+    // Initialize drag-and-drop for items within list blocks
+    container.querySelectorAll(".block-list").forEach(list => {
+      new Sortable(list, {
+        animation: 150,
+        handle: ".item-drag-handle",
+        ghostClass: "sortable-ghost",
+        onEnd: () => saveItemOrder(list.dataset.blockKey, list),
+      });
+    });
+  }
+}
+
+function toggleBlock(blockId) {
+  const hidden = new Set(profileLayout.hidden_blocks || []);
+  if (hidden.has(blockId)) hidden.delete(blockId); else hidden.add(blockId);
+  profileLayout.hidden_blocks = [...hidden];
+  saveLayout();
+  renderProfileBlocks();
+}
+
+function toggleItem(blockKey, idx) {
+  if (!profileLayout.items) profileLayout.items = {};
+  if (!profileLayout.items[blockKey]) profileLayout.items[blockKey] = {};
+  const hidden = new Set(profileLayout.items[blockKey].hidden || []);
+  if (hidden.has(idx)) hidden.delete(idx); else hidden.add(idx);
+  profileLayout.items[blockKey].hidden = [...hidden];
+  saveLayout();
+  renderProfileBlocks();
+}
+
+function saveBlockOrder() {
+  const container = $("profileBlocks");
+  const ids = [...container.querySelectorAll(".profile-block")].map(el => el.dataset.blockId);
+  profileLayout.block_order = ids;
+  saveLayout();
+}
+
+function saveItemOrder(blockKey, list) {
+  const indices = [...list.querySelectorAll(".block-list-item")].map(el => parseInt(el.dataset.itemIdx));
+  if (!profileLayout.items) profileLayout.items = {};
+  if (!profileLayout.items[blockKey]) profileLayout.items[blockKey] = {};
+  profileLayout.items[blockKey].order = indices;
+  saveLayout();
+}
+
+let layoutSaveTimer = null;
+function saveLayout() {
+  clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = setTimeout(async () => {
+    try {
+      await api("/profile-layout", { method: "PUT", body: JSON.stringify(profileLayout) });
+    } catch (e) { console.error("Failed to save layout:", e); }
+  }, 500);
 }
 
 // ---------------- section nav ----------------
@@ -328,12 +487,15 @@ function onAuthChange() {
   const visible = !!authToken;
   $("addPublicationBtn").classList.toggle("hidden", !visible);
   $("enrichAllBtn").classList.toggle("hidden", !visible);
+  $("exportBackupBtn").classList.toggle("hidden", !visible);
   $("exportSnapshotBtn").classList.toggle("hidden", !visible);
   $("resetScoresBtn").classList.toggle("hidden", !visible);
   $("uploadNaasBtn").classList.toggle("hidden", !visible);
   $("uploadJcrBtn").classList.toggle("hidden", !visible);
   $("downloadCvBtn").classList.toggle("hidden", !visible);
   document.querySelectorAll(".add-record-btn").forEach(b => b.classList.toggle("hidden", !visible));
+  // re-render profile blocks so admin controls (drag handles, hide buttons) appear/disappear
+  renderProfileBlocks();
   // re-render whichever section is active so admin action buttons show/hide
   loadSection(currentSection);
   loadFilterOptions();
@@ -486,6 +648,30 @@ async function toggleHidden(id) {
 }
 
 // ---------------- journal scores upload (NAAS + JCR, separately) ----------------
+$("exportBackupBtn").addEventListener("click", async () => {
+  try {
+    const headers = {};
+    if (authToken) headers["Authorization"] = "Bearer " + authToken;
+    const res = await fetch(API_BASE + "/database/export-backup", { headers });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Could not export the database backup.");
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "research_backup.db";
+    document.body.appendChild(a); a.click(); a.remove();
+    window.URL.revokeObjectURL(url);
+    alert(
+      "Downloaded. Save this as backend/research_backup.db in your project, then commit and push it. " +
+      "This preserves EVERYTHING (not just NAAS/JCR — every publication, award, edit, hidden flag) across future redeploys."
+    );
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
 $("exportSnapshotBtn").addEventListener("click", async () => {
   try {
     const headers = {};
