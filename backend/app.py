@@ -338,7 +338,7 @@ def init_db(force_reseed=False):
         (PROJECTS_SEED_PATH, "projects", ["investigators", "project_title", "funding_agency", "date_start", "date_end", "status"]),
         (BOOK_CHAPTERS_SEED_PATH, "book_chapters", ["title", "authors", "editor", "book_title", "publisher", "year", "pages", "isbn", "doi"]),
         (SOFTWARE_SEED_PATH, "software", ["package_name", "reference", "year", "downloads", "cran_url"]),
-        (COURSES_TAUGHT_SEED_PATH, "courses_taught", ["sl_no", "course_name"]),
+        (COURSES_TAUGHT_SEED_PATH, "courses_taught", ["course_name"]),
         (STUDENTS_GUIDED_SEED_PATH, "students_guided", ["name", "start_date", "end_date", "description"]),
     ]:
         if not os.path.exists(path):
@@ -1248,8 +1248,8 @@ SIMPLE_TABLES = {
     "courses-taught": {
         "table": "courses_taught",
         "id_col": "course_id",
-        "columns": ["sl_no", "course_name"],
-        "order_by": "CAST(sl_no AS INTEGER) ASC",
+        "columns": ["course_name"],
+        "order_by": "course_id ASC",
     },
     "students-guided": {
         "table": "students_guided",

@@ -1006,7 +1006,6 @@ const RECORD_SCHEMAS = {
     idField: "course_id",
     label: "Course Taught",
     fields: [
-      { key: "sl_no", label: "Sl. No." },
       { key: "course_name", label: "Course", full: true },
     ],
   },
@@ -1094,7 +1093,7 @@ function renderCoursesTaught(items) {
   $("coursesTaughtList").innerHTML = items.length ? items.map(it => `
     <div class="record-entry" data-id="${it.course_id}">
       <div class="record-main">
-        <h3 class="record-title">${it.sl_no ? escapeHtml(it.sl_no) + ". " : ""}${escapeHtml(it.course_name)}</h3>
+        <h3 class="record-title">${escapeHtml(it.course_name)}</h3>
         <div class="record-meta">${recordTagsHtml(it)}</div>
       </div>
       ${recordActionsHtml("courses-taught", it.course_id, it.hidden)}
