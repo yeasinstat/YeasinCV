@@ -365,8 +365,15 @@ main { max-width: 1080px; margin: 0 auto; padding: 0 32px 80px; }
 
 /* ---- Hero Header Block ---- */
 .profile-block[data-block-id="header"] {
-  background: linear-gradient(135deg, #1C2B39 0%, #2D3E4F 60%, #3A5060 100%);
-  border: none; padding: 36px 36px 32px; color: #fff;
+    background: linear-gradient(
+        135deg,
+        #3C4A33 0%,
+        #5A6848 55%,
+        #7A8762 100%
+    );
+    border: none;
+    padding: 36px 36px 32px;
+    color: #fff;
 }
 .profile-block[data-block-id="header"] .profile-block-header { border-bottom-color: rgba(255,255,255,0.2); }
 .profile-block[data-block-id="header"] .profile-block-title { color: rgba(255,255,255,0.7); }
@@ -384,15 +391,33 @@ main { max-width: 1080px; margin: 0 auto; padding: 0 32px 80px; }
 .block-photo:hover { transform: scale(1.05); }
 .block-links { display: flex; gap: 8px; width: 100%; }
 .block-link-btn {
-  flex: 1; display: block; text-align: center; padding: 8px 10px;
-  border: 1px solid rgba(255,255,255,0.35); border-radius: 6px;
-  font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.9);
-  text-decoration: none; transition: background 0.2s, color 0.2s;
-  backdrop-filter: blur(4px); background: rgba(255,255,255,0.08);
+  flex: 1;
+  display: block;
+  text-align: center;
+  padding: 10px 12px;
+  border: 1px solid #D9C99B;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #F7F3EA;
+  text-decoration: none;
+  background: rgba(255,255,255,0.06);
+  transition: all 0.3s ease;
 }
-.block-link-btn:hover { background: rgba(255,255,255,0.2); color: #fff; }
+
+.block-link-btn:hover {
+  background: #D9C99B;
+  color: #3C4A33;
+  border-color: #D9C99B;
+  transform: translateY(-2px);
+}
 .block-name { font-family: var(--font-serif); font-size: 2.2rem; font-weight: 700; margin: 0 0 4px; color: #fff; line-height: 1.15; }
-.block-role { font-weight: 600; font-size: 0.95rem; margin: 0 0 8px; color: rgba(255,255,255,0.75); }
+.block-role {
+    color: #E8E2C8;      /* Soft cream-gold */
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 8px 0;
+}
 .block-address { font-size: 0.82rem; margin: 0; color: rgba(255,255,255,0.55); }
 
 /* ---- Contact Block ---- */

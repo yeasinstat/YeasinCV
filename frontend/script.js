@@ -80,8 +80,10 @@ function renderProfileBlocks() {
           <div class="block-photo-col">
             <img src="yeasin-photo.png" alt="Photo of ${escapeHtml(s.name)}" class="block-photo">
             <div class="block-links">
-              <a href="https://scholar.google.com/citations?user=xejMKD0AAAAJ&hl=en&oi=sra" target="_blank" rel="noopener" class="block-link-btn">Google Scholar</a>
-              <a href="https://www.linkedin.com/in/dr-yeasin/" target="_blank" rel="noopener" class="block-link-btn">LinkedIn</a>
+              <a href="https://scholar.google.com/citations?user=xejMKD0AAAAJ&hl=en&oi=sra" target="_blank" rel="noopener" class="block-link-btn"><i class="fas fa-graduation-cap"></i>
+                <span>Google Scholar</span></a>
+              <a href="https://www.linkedin.com/in/dr-yeasin/" target="_blank" rel="noopener" class="block-link-btn"><i class="fab fa-linkedin"></i>
+                <span>LinkedIn</span></a>
             </div>
           </div>
           <div>
