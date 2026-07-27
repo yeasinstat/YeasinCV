@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS papers (
     doi                  TEXT,
     article_type         TEXT,
     impact_factor        TEXT,
-    quartile             TEXT,
+    quartile              TEXT,
     domain               TEXT,
     field                TEXT DEFAULT '',
     hidden               INTEGER DEFAULT 0,
@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS papers (
     keywords             TEXT DEFAULT '',
     naas_score           TEXT DEFAULT '',
     selected             INTEGER DEFAULT 0,
+    cv_included          INTEGER DEFAULT 1,
     created_at           TEXT DEFAULT (datetime('now'))
 );
 
@@ -119,6 +120,7 @@ CREATE TABLE IF NOT EXISTS awards (
     year          TEXT,
     description   TEXT DEFAULT '',
     hidden        INTEGER DEFAULT 0,
+    cv_included   INTEGER DEFAULT 1,
     created_at    TEXT DEFAULT (datetime('now'))
 );
 
@@ -132,6 +134,7 @@ CREATE TABLE IF NOT EXISTS projects (
     date_end        TEXT DEFAULT '',
     status          TEXT,
     hidden          INTEGER DEFAULT 0,
+    cv_included     INTEGER DEFAULT 1,
     created_at      TEXT DEFAULT (datetime('now'))
 );
 
@@ -147,6 +150,7 @@ CREATE TABLE IF NOT EXISTS book_chapters (
     isbn            TEXT,
     doi             TEXT DEFAULT '',
     hidden          INTEGER DEFAULT 0,
+    cv_included     INTEGER DEFAULT 1,
     created_at      TEXT DEFAULT (datetime('now'))
 );
 
@@ -158,6 +162,7 @@ CREATE TABLE IF NOT EXISTS software (
     downloads    TEXT DEFAULT '',
     cran_url     TEXT DEFAULT '',
     hidden       INTEGER DEFAULT 0,
+    cv_included  INTEGER DEFAULT 1,
     created_at   TEXT DEFAULT (datetime('now'))
 );
 
@@ -166,6 +171,7 @@ CREATE TABLE IF NOT EXISTS courses_taught (
     sl_no       TEXT,
     course_name TEXT,
     hidden      INTEGER DEFAULT 0,
+    cv_included INTEGER DEFAULT 1,
     created_at  TEXT DEFAULT (datetime('now'))
 );
 
@@ -176,6 +182,7 @@ CREATE TABLE IF NOT EXISTS students_guided (
     end_date    TEXT,
     description TEXT DEFAULT '',
     hidden      INTEGER DEFAULT 0,
+    cv_included INTEGER DEFAULT 1,
     created_at  TEXT DEFAULT (datetime('now'))
 );
 
@@ -256,6 +263,10 @@ def migrate_db(conn):
         conn.execute("ALTER TABLE papers ADD COLUMN selected INTEGER DEFAULT 0")
     conn.commit()
 
+    if "cv_included" not in existing:
+        conn.execute("ALTER TABLE papers ADD COLUMN cv_included INTEGER DEFAULT 1")
+    conn.commit()
+
     proj_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)")}
     if "date_end" not in proj_cols:
         conn.execute("ALTER TABLE projects ADD COLUMN date_end TEXT DEFAULT ''")
@@ -264,6 +275,14 @@ def migrate_db(conn):
     bc_cols = {row[1] for row in conn.execute("PRAGMA table_info(book_chapters)")}
     if "editor" not in bc_cols:
         conn.execute("ALTER TABLE book_chapters ADD COLUMN editor TEXT DEFAULT ''")
+    conn.commit()
+
+    # cv_included on every simple-CRUD record table (awards, projects,
+    # book_chapters, software, courses_taught, students_guided)
+    for _tbl in ("awards", "projects", "book_chapters", "software", "courses_taught", "students_guided"):
+        _cols = {row[1] for row in conn.execute(f"PRAGMA table_info({_tbl})")}
+        if "cv_included" not in _cols:
+            conn.execute(f"ALTER TABLE {_tbl} ADD COLUMN cv_included INTEGER DEFAULT 1")
     conn.commit()
 
     js_cols = {row[1] for row in conn.execute("PRAGMA table_info(journal_scores)")}
@@ -965,6 +984,20 @@ def toggle_paper_selected(pub_id):
     return jsonify({"message": "Added to Selected." if new_val else "Removed from Selected.", "selected": bool(new_val)})
 
 
+@app.route("/api/papers/<int:pub_id>/toggle-cv-included", methods=["POST"])
+@require_auth
+def toggle_paper_cv_included(pub_id):
+    """Toggles whether a paper is included in the downloadable CV."""
+    db = get_db()
+    row = db.execute("SELECT cv_included FROM papers WHERE publication_id = ?", (pub_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "Paper not found."}), 404
+    new_val = 0 if row["cv_included"] else 1
+    db.execute("UPDATE papers SET cv_included = ? WHERE publication_id = ?", (new_val, pub_id))
+    db.commit()
+    return jsonify({"message": "Added to CV." if new_val else "Removed from CV.", "cv_included": bool(new_val)})
+
+
 @app.route("/api/papers/<int:pub_id>/enrich", methods=["POST"])
 @require_auth
 def enrich_paper(pub_id):
@@ -1324,11 +1357,22 @@ def _register_simple_crud(endpoint_name, config):
         db.commit()
         return jsonify({"message": "Hidden." if new_val else "Visible again.", "hidden": bool(new_val)})
 
+    def toggle_cv_included(item_id):
+        db = get_db()
+        row = db.execute(f"SELECT cv_included FROM {table} WHERE {id_col} = ?", (item_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "Not found."}), 404
+        new_val = 0 if row["cv_included"] else 1
+        db.execute(f"UPDATE {table} SET cv_included = ? WHERE {id_col} = ?", (new_val, item_id))
+        db.commit()
+        return jsonify({"message": "Added to CV." if new_val else "Removed from CV.", "cv_included": bool(new_val)})
+
     app.add_url_rule(f"/api/{endpoint_name}", f"list_{table}", list_items, methods=["GET"])
     app.add_url_rule(f"/api/{endpoint_name}", f"add_{table}", require_auth(add_item), methods=["POST"])
     app.add_url_rule(f"/api/{endpoint_name}/<int:item_id>", f"update_{table}", require_auth(update_item), methods=["PUT"])
     app.add_url_rule(f"/api/{endpoint_name}/<int:item_id>", f"delete_{table}", require_auth(delete_item), methods=["DELETE"])
     app.add_url_rule(f"/api/{endpoint_name}/<int:item_id>/toggle-hidden", f"toggle_{table}", require_auth(toggle_hidden), methods=["POST"])
+    app.add_url_rule(f"/api/{endpoint_name}/<int:item_id>/toggle-cv-included", f"toggle_cv_{table}", require_auth(toggle_cv_included), methods=["POST"])
 
 
 for _endpoint, _config in SIMPLE_TABLES.items():
@@ -1834,7 +1878,7 @@ def reset_journal_scores():
 # styled PDF. Uses reportlab (pure Python, no system graphics libraries
 # required) so it works the same locally and on minimal hosts like Render.
 # ---------------------------------------------------------------------------
-def _build_cv_pdf(selections):
+def _build_cv_pdf():
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.lib import colors
@@ -1857,78 +1901,103 @@ def _build_cv_pdf(selections):
     meta_style = ParagraphStyle("meta", fontName="Helvetica-Oblique", fontSize=8.5, textColor=slate, leading=12, spaceAfter=8)
     entry_title_style = ParagraphStyle("entry_title", fontName="Helvetica-Bold", fontSize=9.5, textColor=ink, leading=13, spaceBefore=6)
 
+    db = get_db()
+
+    # ---- Read the saved Home-tab tick state (profile_layout.config) ----
+    layout_row = db.execute("SELECT config FROM profile_layout WHERE id = 1").fetchone()
+    layout = json.loads(layout_row["config"]) if layout_row else {}
+    cv_blocks = layout.get("cv_blocks")  # None = not yet configured -> include everything
+    cv_items = layout.get("cv_items", {})
+
+    def block_included(block_id):
+        return True if cv_blocks is None else (block_id in cv_blocks)
+
+    def item_included(block_key, idx):
+        cfg = cv_items.get(block_key)
+        return True if cfg is None else (idx in cfg)
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
         topMargin=18 * mm, bottomMargin=18 * mm, leftMargin=18 * mm, rightMargin=18 * mm,
     )
     story = []
-
-    # ---- Header: photo + profile ----
-    photo_path = os.path.join(FRONTEND_DIR, "yeasin-photo.png")
-    header_cells = []
-    if os.path.exists(photo_path):
-        try:
-            img = Image(photo_path, width=30 * mm, height=30 * mm)
-            header_cells.append(img)
-        except Exception:
-            header_cells.append("")
-    else:
-        header_cells.append("")
-
     p = SCIENTIST_PROFILE
-    contact_bits = []
-    if p.get("mobile"):
-        contact_bits.append("Mobile: " + " / ".join(p["mobile"]))
-    if p.get("email"):
-        contact_bits.append("Email: " + ", ".join(p["email"]))
 
-    info_flow = [
-        Paragraph(p["name"], name_style),
-        Paragraph(f"{p['designation']} &middot; {p['institute']}", role_style),
-        Paragraph(p.get("address", ""), small_style),
-        Paragraph(" &nbsp;|&nbsp; ".join(contact_bits), small_style),
-    ]
-    header_cells.append(info_flow)
+    # ---- Header block (photo + name/role/address) ----
+    if block_included("header"):
+        photo_path = os.path.join(FRONTEND_DIR, "yeasin-photo.png")
+        header_cells = []
+        if os.path.exists(photo_path):
+            try:
+                header_cells.append(Image(photo_path, width=30 * mm, height=30 * mm))
+            except Exception:
+                header_cells.append("")
+        else:
+            header_cells.append("")
 
-    header_table = Table([header_cells], colWidths=[35 * mm, None])
-    header_table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (0, 0), 0),
-        ("LEFTPADDING", (1, 0), (1, 0), 12),
-    ]))
-    story.append(header_table)
-    story.append(Spacer(1, 10))
-    story.append(HRFlowable(width="100%", color=line, thickness=0.75))
-    story.append(Spacer(1, 8))
+        info_flow = [
+            Paragraph(p["name"], name_style),
+            Paragraph(f"{p['designation']} &middot; {p['institute']}", role_style),
+            Paragraph(p.get("address", ""), small_style),
+        ]
+        header_cells.append(info_flow)
 
-    if p.get("research_interest"):
+        header_table = Table([header_cells], colWidths=[35 * mm, None])
+        header_table.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (0, 0), 0),
+            ("LEFTPADDING", (1, 0), (1, 0), 12),
+        ]))
+        story.append(header_table)
+        story.append(Spacer(1, 10))
+        story.append(HRFlowable(width="100%", color=line, thickness=0.75))
+        story.append(Spacer(1, 8))
+
+    # ---- Contact block ----
+    if block_included("contact"):
+        contact_bits = []
+        if p.get("dob"):
+            contact_bits.append(f"DOB: {p['dob']}")
+        if p.get("mobile"):
+            contact_bits.append("Mobile: " + " / ".join(p["mobile"]))
+        if p.get("email"):
+            contact_bits.append("Email: " + ", ".join(p["email"]))
+        if contact_bits:
+            story.append(Paragraph(" &nbsp;|&nbsp; ".join(contact_bits), small_style))
+            story.append(Spacer(1, 6))
+
+    # ---- Research interest block ----
+    if block_included("research_interest") and p.get("research_interest"):
         story.append(Paragraph("Research Interest", h2_style))
         story.append(Paragraph(p["research_interest"], body_style))
 
-    if p.get("education"):
-        story.append(Paragraph("Education", h2_style))
-        for e in p["education"]:
-            story.append(Paragraph(f"<b>{e['degree']}</b> ({e['year']}) &middot; {e['institution']}", body_style))
+    # ---- Education / Accolades / Employment / Other Records (per-item ticks) ----
+    def list_block(block_id, title, data_items, render_fn):
+        if not block_included(block_id) or not data_items:
+            return
+        included = [(i, item) for i, item in enumerate(data_items) if item_included(block_id, i)]
+        if not included:
+            return
+        story.append(Paragraph(title, h2_style))
+        for i, item in included:
+            story.append(Paragraph(render_fn(item), body_style))
 
-    if p.get("employment"):
-        story.append(Paragraph("Employment", h2_style))
-        for e in p["employment"]:
-            story.append(Paragraph(f"<b>{e['period']}</b> &middot; {e['role']}, {e['institution']}", body_style))
-
-    db = get_db()
+    list_block("education", "Education", p.get("education", []),
+               lambda e: f"<b>{e['degree']}</b> ({e['year']}) &middot; {e['institution']}")
+    list_block("accolades", "Academic Accolades", p.get("accolades", []),
+               lambda a: a)
+    list_block("employment", "Employment", p.get("employment", []),
+               lambda e: f"<b>{e['period']}</b> &middot; {e['role']}, {e['institution']}")
+    list_block("other_records", "Other Records", p.get("other_records", []),
+               lambda r: r)
 
     def section_header(title):
         story.append(Paragraph(title, h2_style))
 
-    def id_filter(ids):
-        placeholders = ",".join(["?"] * len(ids))
-        return placeholders, list(ids)
-
-    pub_ids = selections.get("publications") or []
-    if pub_ids:
-        ph, params = id_filter(pub_ids)
-        rows = db.execute(f"SELECT * FROM papers WHERE publication_id IN ({ph}) ORDER BY year DESC", params).fetchall()
+    # ---- Publications ----
+    rows = db.execute("SELECT * FROM papers WHERE cv_included = 1 ORDER BY year DESC").fetchall()
+    if rows:
         section_header(f"Publications ({len(rows)})")
         for i, r in enumerate(rows, 1):
             story.append(Paragraph(f"{i}. {r['complete_reference'] or r['title']}", body_style))
@@ -1942,66 +2011,77 @@ def _build_cv_pdf(selections):
             if tag_bits:
                 story.append(Paragraph(" &middot; ".join(tag_bits), meta_style))
 
-    award_ids = selections.get("awards") or []
-    if award_ids:
-        ph, params = id_filter(award_ids)
-        rows = db.execute(f"SELECT * FROM awards WHERE award_id IN ({ph}) ORDER BY year DESC", params).fetchall()
+    # ---- Awards ----
+    rows = db.execute("SELECT * FROM awards WHERE cv_included = 1 ORDER BY year DESC").fetchall()
+    if rows:
         section_header(f"Awards ({len(rows)})")
         for r in rows:
             story.append(Paragraph(r["title"], entry_title_style))
             story.append(Paragraph(f"{r['awarding_body']} &middot; {r['year']}", meta_style))
 
-    project_ids = selections.get("projects") or []
-    if project_ids:
-        ph, params = id_filter(project_ids)
-        rows = db.execute(f"SELECT * FROM projects WHERE project_id IN ({ph}) ORDER BY date_start DESC", params).fetchall()
+    # ---- Projects ----
+    rows = db.execute("SELECT * FROM projects WHERE cv_included = 1 ORDER BY date_start DESC").fetchall()
+    if rows:
         section_header(f"Projects ({len(rows)})")
         for r in rows:
             story.append(Paragraph(r["project_title"], entry_title_style))
-            story.append(Paragraph(f"{r['funding_agency']} &middot; Started {r['date_start']} &middot; {r['status']}", meta_style))
+            date_bit = f"Started {r['date_start']}" + (f" &middot; Ended {r['date_end']}" if r["date_end"] else "")
+            story.append(Paragraph(f"{r['funding_agency']} &middot; {date_bit} &middot; {r['status']}", meta_style))
 
-    chapter_ids = selections.get("book-chapters") or []
-    if chapter_ids:
-        ph, params = id_filter(chapter_ids)
-        rows = db.execute(f"SELECT * FROM book_chapters WHERE book_chapter_id IN ({ph}) ORDER BY year DESC", params).fetchall()
+    # ---- Book Chapters ----
+    rows = db.execute("SELECT * FROM book_chapters WHERE cv_included = 1 ORDER BY year DESC").fetchall()
+    if rows:
         section_header(f"Book Chapters ({len(rows)})")
         for r in rows:
             story.append(Paragraph(r["title"], entry_title_style))
-            story.append(Paragraph(f"{r['authors']}", body_style))
+            author_bit = r["authors"] + (f" &middot; Editor: {r['editor']}" if r["editor"] else "")
+            story.append(Paragraph(author_bit, body_style))
             story.append(Paragraph(f"{r['book_title']} &middot; {r['publisher']} &middot; {r['year']}", meta_style))
 
-    software_ids = selections.get("software") or []
-    if software_ids:
-        ph, params = id_filter(software_ids)
-        rows = db.execute(f"SELECT * FROM software WHERE software_id IN ({ph}) ORDER BY year DESC", params).fetchall()
+    # ---- Software / Packages ----
+    rows = db.execute("SELECT * FROM software WHERE cv_included = 1 ORDER BY year DESC").fetchall()
+    if rows:
         section_header(f"Software / Packages ({len(rows)})")
         for r in rows:
             story.append(Paragraph(r["package_name"], entry_title_style))
             story.append(Paragraph(f"{r['reference']}", meta_style))
+
+    # ---- Courses Taught ----
+    rows = db.execute("SELECT * FROM courses_taught WHERE cv_included = 1 ORDER BY course_id ASC").fetchall()
+    if rows:
+        section_header(f"Courses Taught ({len(rows)})")
+        for r in rows:
+            story.append(Paragraph(r["course_name"], body_style))
+
+    # ---- Students Guided ----
+    rows = db.execute("SELECT * FROM students_guided WHERE cv_included = 1 ORDER BY start_date DESC").fetchall()
+    if rows:
+        section_header(f"Students Guided ({len(rows)})")
+        for r in rows:
+            story.append(Paragraph(r["name"], entry_title_style))
+            date_bit = r["start_date"] + (f" &ndash; {r['end_date']}" if r["end_date"] else "")
+            story.append(Paragraph(date_bit, meta_style))
+            if r["description"]:
+                story.append(Paragraph(r["description"], body_style))
 
     doc.build(story)
     buf.seek(0)
     return buf
 
 
-@app.route("/api/cv/download", methods=["POST"])
+@app.route("/api/cv/download", methods=["GET", "POST"])
 @require_auth
 def download_cv():
     """
-    Accepts { "publications": [id, id, ...], "awards": [...], "projects": [...],
-    "book-chapters": [...], "software": [...] } — each key holds the specific
-    item IDs the admin selected in that section. A missing or empty key means
-    that section is left out of the CV entirely.
+    Generates the CV from whatever is currently ticked for CV inclusion
+    across the whole site — no selection payload needed. Every record type
+    (papers, awards, projects, book chapters, software, courses taught,
+    students guided) has its own cv_included flag toggled directly on its
+    card; the Home profile blocks/items use the same tick mechanism, saved
+    in profile_layout.
     """
-    data = request.get_json(force=True) or {}
-    valid_keys = {"publications", "awards", "projects", "book-chapters", "software"}
-    selections = {}
-    for k, v in data.items():
-        if k in valid_keys and isinstance(v, list):
-            selections[k] = [int(x) for x in v if str(x).isdigit()]
-
     try:
-        pdf_buf = _build_cv_pdf(selections)
+        pdf_buf = _build_cv_pdf()
     except Exception as e:
         return jsonify({"error": f"Could not generate the CV: {e}"}), 500
 

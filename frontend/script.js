@@ -72,6 +72,14 @@ function renderProfileBlocks() {
   const blockOrder = profileLayout.block_order || DEFAULT_BLOCK_ORDER;
   const hiddenBlocks = new Set(profileLayout.hidden_blocks || []);
   const items = profileLayout.items || {};
+  // cv_blocks/cv_items: undefined/null means "everything included" (default state)
+  const cvBlocksSet = profileLayout.cv_blocks ? new Set(profileLayout.cv_blocks) : null;
+  const isBlockCvIncluded = (id) => cvBlocksSet === null ? true : cvBlocksSet.has(id);
+  const cvItemsCfg = profileLayout.cv_items || {};
+  const isItemCvIncluded = (key, idx) => {
+    const cfg = cvItemsCfg[key];
+    return cfg === undefined ? true : cfg.includes(idx);
+  };
 
   const blockRenderers = {
     header: () => {
@@ -130,8 +138,12 @@ function renderProfileBlocks() {
       if (idx >= dataItems.length) return "";
       const hidden = hiddenItems.has(idx);
       if (hidden && !isAdmin) return "";
+      const cvOn = isItemCvIncluded(key, idx);
       return `<li class="block-list-item${hidden ? " item-hidden" : ""}" data-item-idx="${idx}">
         <span class="item-drag-handle" title="Drag to reorder">⠿</span>
+        <label class="cv-tick" title="Include in CV">
+          <input type="checkbox" class="item-cv-checkbox" data-block="${key}" data-idx="${idx}" ${cvOn ? "checked" : ""}>
+        </label>
         <span class="item-text">${renderFn(dataItems[idx])}</span>
         <button class="item-toggle-btn" data-block="${key}" data-idx="${idx}">${hidden ? "Show" : "Hide"}</button>
       </li>`;
@@ -147,15 +159,28 @@ function renderProfileBlocks() {
     const isHidden = hiddenBlocks.has(blockId);
     if (isHidden && !isAdmin) continue;
     const { title, html: content } = renderer();
+    const cvOn = isBlockCvIncluded(blockId);
 
     html += `<div class="profile-block${isHidden ? " block-hidden" : ""}" data-block-id="${blockId}">
       ${title || isAdmin ? `<div class="profile-block-header">
         <h3 class="profile-block-title">${escapeHtml(title)}</h3>
         <div class="profile-block-admin">
+          <label class="cv-tick" title="Include in CV">
+            <input type="checkbox" class="block-cv-checkbox" data-block="${blockId}" ${cvOn ? "checked" : ""}>
+          </label>
           <span class="block-drag-handle" title="Drag to reorder">⠿</span>
           <button class="block-toggle-btn" data-block="${blockId}">${isHidden ? "Show" : "Hide"}</button>
         </div>
-      </div>` : ""}
+      </div>` : (isAdmin ? `<div class="profile-block-header" style="border-bottom:none; margin-bottom:4px; padding-bottom:0;">
+        <span></span>
+        <div class="profile-block-admin">
+          <label class="cv-tick" title="Include in CV">
+            <input type="checkbox" class="block-cv-checkbox" data-block="${blockId}" ${cvOn ? "checked" : ""}>
+          </label>
+          <span class="block-drag-handle" title="Drag to reorder">⠿</span>
+          <button class="block-toggle-btn" data-block="${blockId}">${isHidden ? "Show" : "Hide"}</button>
+        </div>
+      </div>` : "")}
       ${content}
     </div>`;
   }
@@ -172,6 +197,16 @@ function renderProfileBlocks() {
   // Wire up item hide/show buttons
   container.querySelectorAll(".item-toggle-btn").forEach(btn => {
     btn.addEventListener("click", () => toggleItem(btn.dataset.block, parseInt(btn.dataset.idx)));
+  });
+
+  // Wire up block CV checkboxes
+  container.querySelectorAll(".block-cv-checkbox").forEach(cb => {
+    cb.addEventListener("change", () => toggleBlockCv(cb.dataset.block));
+  });
+
+  // Wire up item CV checkboxes
+  container.querySelectorAll(".item-cv-checkbox").forEach(cb => {
+    cb.addEventListener("change", () => toggleItemCv(cb.dataset.block, parseInt(cb.dataset.idx)));
   });
 
   // Initialize drag-and-drop for blocks
@@ -194,6 +229,32 @@ function renderProfileBlocks() {
       });
     });
   }
+}
+
+function toggleBlockCv(blockId) {
+  // Materialize the "everything included" default into an explicit list the first time anything is toggled
+  if (!profileLayout.cv_blocks) {
+    profileLayout.cv_blocks = DEFAULT_BLOCK_ORDER.slice();
+  }
+  const set = new Set(profileLayout.cv_blocks);
+  if (set.has(blockId)) set.delete(blockId); else set.add(blockId);
+  profileLayout.cv_blocks = [...set];
+  saveLayout();
+}
+
+function toggleItemCv(blockKey, idx) {
+  if (!profileLayout.cv_items) profileLayout.cv_items = {};
+  if (!profileLayout.cv_items[blockKey]) {
+    // Materialize default (all current items included) before toggling one off
+    const s = scientistData;
+    const dataMap = { education: s.education, accolades: s.accolades, employment: s.employment, other_records: s.other_records };
+    const len = (dataMap[blockKey] || []).length;
+    profileLayout.cv_items[blockKey] = Array.from({ length: len }, (_, i) => i);
+  }
+  const set = new Set(profileLayout.cv_items[blockKey]);
+  if (set.has(idx)) set.delete(idx); else set.add(idx);
+  profileLayout.cv_items[blockKey] = [...set];
+  saveLayout();
 }
 
 function toggleBlock(blockId) {
@@ -414,6 +475,9 @@ function renderPapers(papers) {
         <div class="paper-year">${escapeHtml(p.year || "—")}</div>
         ${p.impact_factor ? `<div class="paper-if">IF ${escapeHtml(p.impact_factor)}</div>` : ""}
         <div class="admin-actions ${authToken ? "visible" : ""}">
+          <label class="cv-tick" title="Include in CV">
+            <input type="checkbox" data-paper-cv="${p.publication_id}" ${p.cv_included ? "checked" : ""}>
+          </label>
           <button class="select-star-btn ${p.selected ? "is-selected" : ""}" data-toggle-selected="${p.publication_id}" title="${p.selected ? "Remove from Selected" : "Add to Selected"}">&#9733;</button>
           <button class="icon-btn" data-edit="${p.publication_id}">Edit</button>
           <button class="icon-btn" data-toggle-hidden="${p.publication_id}">${p.hidden ? "Show" : "Hide"}</button>
@@ -427,6 +491,17 @@ function renderPapers(papers) {
   list.querySelectorAll("[data-delete]").forEach(b => b.addEventListener("click", () => deletePaper(b.dataset.delete)));
   list.querySelectorAll("[data-toggle-hidden]").forEach(b => b.addEventListener("click", () => toggleHidden(b.dataset.toggleHidden)));
   list.querySelectorAll("[data-toggle-selected]").forEach(b => b.addEventListener("click", () => toggleSelected(b.dataset.toggleSelected)));
+  list.querySelectorAll("[data-paper-cv]").forEach(b => b.addEventListener("change", () => togglePaperCvIncluded(b.dataset.paperCv)));
+  setupSelectAllTick("publications", papers, "publication_id", id => `/papers/${id}/toggle-cv-included`, () => loadPapers());
+}
+
+async function togglePaperCvIncluded(id) {
+  try {
+    await api(`/papers/${id}/toggle-cv-included`, { method: "POST" });
+    await loadPapers();
+  } catch (e) {
+    alert(e.message);
+  }
 }
 
 async function toggleSelected(id) {
@@ -528,6 +603,7 @@ function onAuthChange() {
   $("uploadJcrBtn").classList.toggle("hidden", !visible);
   $("downloadCvBtn").classList.toggle("hidden", !visible);
   document.querySelectorAll(".add-record-btn").forEach(b => b.classList.toggle("hidden", !visible));
+  document.querySelectorAll(".section-header-tick").forEach(b => b.classList.toggle("hidden", !visible));
   // re-render profile blocks so admin controls (drag handles, hide buttons) appear/disappear
   renderProfileBlocks();
   // re-render whichever section is active so admin action buttons show/hide
@@ -831,109 +907,16 @@ async function pollJcrJob(jobId) {
   poll();
 }
 
-// ---------------- CV download ----------------
-const CV_SECTIONS = {
-  "publications": {
-    endpoint: "/papers?sort=year_desc", idField: "publication_id",
-    label: p => `${escapeHtml(p.title)}`,
-    meta: p => `${escapeHtml(p.authors)}${p.journal ? " &middot; " + escapeHtml(p.journal) : ""} &middot; ${escapeHtml(p.year || "")}`,
-  },
-  "awards": {
-    endpoint: "/awards", idField: "award_id",
-    label: a => escapeHtml(a.title),
-    meta: a => `${escapeHtml(a.awarding_body)} &middot; ${escapeHtml(a.year)}`,
-  },
-  "projects": {
-    endpoint: "/projects", idField: "project_id",
-    label: pr => escapeHtml(pr.project_title),
-    meta: pr => `${escapeHtml(pr.funding_agency)} &middot; ${escapeHtml(pr.date_start)}`,
-  },
-  "book-chapters": {
-    endpoint: "/book-chapters", idField: "book_chapter_id",
-    label: b => escapeHtml(b.title),
-    meta: b => `${escapeHtml(b.book_title)} &middot; ${escapeHtml(b.year)}`,
-  },
-  "software": {
-    endpoint: "/software", idField: "software_id",
-    label: s => escapeHtml(s.package_name),
-    meta: s => `${escapeHtml(s.year)}`,
-  },
-};
-
-async function loadCvSections() {
-  for (const [key, cfg] of Object.entries(CV_SECTIONS)) {
-    const container = $(`cvList_${key}`);
-    container.innerHTML = `<p class="cv-item-meta">Loading...</p>`;
-    try {
-      const items = await api(cfg.endpoint);
-      container.innerHTML = items.length ? items.map(it => `
-        <label class="cv-item-option">
-          <input type="checkbox" class="cv-item-checkbox" data-section="${key}" data-id="${it[cfg.idField]}" checked>
-          <span><strong>${cfg.label(it)}</strong><br><span class="cv-item-meta">${cfg.meta(it)}</span></span>
-        </label>
-      `).join("") : `<p class="cv-item-meta">Nothing here yet.</p>`;
-      updateSectionToggleState(key);
-      container.querySelectorAll(".cv-item-checkbox").forEach(cb => {
-        cb.addEventListener("change", () => updateSectionToggleState(key));
-      });
-    } catch (e) {
-      container.innerHTML = `<p class="cv-item-meta">Could not load.</p>`;
-    }
-  }
-}
-
-function updateSectionToggleState(section) {
-  const boxes = document.querySelectorAll(`.cv-item-checkbox[data-section="${section}"]`);
-  const toggle = document.querySelector(`.cv-section-toggle[data-section="${section}"]`);
-  if (!toggle || !boxes.length) return;
-  toggle.checked = Array.from(boxes).every(b => b.checked);
-}
-
-document.querySelectorAll(".cv-section-toggle").forEach(toggle => {
-  toggle.addEventListener("change", () => {
-    const section = toggle.dataset.section;
-    document.querySelectorAll(`.cv-item-checkbox[data-section="${section}"]`).forEach(cb => {
-      cb.checked = toggle.checked;
-    });
-  });
-});
-
-$("cvSelectAllBtn").addEventListener("click", () => {
-  document.querySelectorAll(".cv-item-checkbox").forEach(cb => { cb.checked = true; });
-  document.querySelectorAll(".cv-section-toggle").forEach(t => { t.checked = true; });
-});
-
-$("cvClearAllBtn").addEventListener("click", () => {
-  document.querySelectorAll(".cv-item-checkbox").forEach(cb => { cb.checked = false; });
-  document.querySelectorAll(".cv-section-toggle").forEach(t => { t.checked = false; });
-});
-
-$("downloadCvBtn").addEventListener("click", () => {
-  $("cvError").textContent = "";
-  openModal("cvModalBackdrop");
-  loadCvSections();
-});
-
-$("cvGenerateBtn").addEventListener("click", async () => {
-  $("cvError").textContent = "";
-  const payload = {};
-  for (const key of Object.keys(CV_SECTIONS)) {
-    const ids = Array.from(document.querySelectorAll(`.cv-item-checkbox[data-section="${key}"]:checked`))
-      .map(cb => cb.dataset.id);
-    if (ids.length) payload[key] = ids;
-  }
-  if (Object.keys(payload).length === 0) {
-    $("cvError").textContent = "Select at least one item first.";
-    return;
-  }
-
-  $("cvGenerateBtn").textContent = "Generating..."; $("cvGenerateBtn").disabled = true;
+// ---------------- CV download (direct — uses whatever is currently ticked across the site) ----------------
+$("downloadCvBtn").addEventListener("click", async () => {
+  const btn = $("downloadCvBtn");
+  const originalText = btn.textContent;
+  btn.textContent = "Generating...";
+  btn.disabled = true;
   try {
-    const headers = { "Content-Type": "application/json" };
+    const headers = {};
     if (authToken) headers["Authorization"] = "Bearer " + authToken;
-    const res = await fetch(API_BASE + "/cv/download", {
-      method: "POST", headers, body: JSON.stringify(payload),
-    });
+    const res = await fetch(API_BASE + "/cv/download", { method: "GET", headers });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || "Could not generate the CV.");
@@ -944,11 +927,11 @@ $("cvGenerateBtn").addEventListener("click", async () => {
     a.href = url; a.download = "Md_Yeasin_CV.pdf";
     document.body.appendChild(a); a.click(); a.remove();
     window.URL.revokeObjectURL(url);
-    closeModal("cvModalBackdrop");
   } catch (e) {
-    $("cvError").textContent = e.message;
+    alert(e.message);
   } finally {
-    $("cvGenerateBtn").textContent = "Generate & Download"; $("cvGenerateBtn").disabled = false;
+    btn.textContent = originalText;
+    btn.disabled = false;
   }
 });
 
@@ -1025,9 +1008,12 @@ function recordTagsHtml(item) {
   return item.hidden ? `<span class="tag tag-hidden">Hidden</span>` : "";
 }
 
-function recordActionsHtml(type, id, hidden) {
+function recordActionsHtml(type, id, hidden, cvIncluded) {
   return `
     <div class="record-actions admin-actions ${authToken ? "visible" : ""}">
+      <label class="cv-tick" title="Include in CV">
+        <input type="checkbox" data-record-cv="${type}" data-id="${id}" ${cvIncluded ? "checked" : ""}>
+      </label>
       <button class="icon-btn" data-record-edit="${type}" data-id="${id}">Edit</button>
       <button class="icon-btn" data-record-toggle-hidden="${type}" data-id="${id}">${hidden ? "Show" : "Hide"}</button>
       <button class="icon-btn danger" data-record-delete="${type}" data-id="${id}">Delete</button>
@@ -1041,7 +1027,7 @@ function renderAwards(items) {
         <h3 class="record-title">${escapeHtml(it.title)}</h3>
         <div class="record-meta">${escapeHtml(it.awarding_body)} &middot; ${escapeHtml(it.year)}${it.description ? " &middot; " + escapeHtml(it.description) : ""} ${recordTagsHtml(it)}</div>
       </div>
-      ${recordActionsHtml("awards", it.award_id, it.hidden)}
+      ${recordActionsHtml("awards", it.award_id, it.hidden, it.cv_included)}
     </div>
   `).join("") : `<div class="empty-state">No awards yet.</div>`;
   wireRecordButtons("awards", items, "award_id");
@@ -1055,7 +1041,7 @@ function renderProjects(items) {
         <div class="record-meta">${escapeHtml(it.investigators)}</div>
         <div class="record-meta">${escapeHtml(it.funding_agency)} &middot; Started ${escapeHtml(it.date_start)}${it.date_end ? " &middot; Ended " + escapeHtml(it.date_end) : ""} &middot; ${escapeHtml(it.status)} ${recordTagsHtml(it)}</div>
       </div>
-      ${recordActionsHtml("projects", it.project_id, it.hidden)}
+      ${recordActionsHtml("projects", it.project_id, it.hidden, it.cv_included)}
     </div>
   `).join("") : `<div class="empty-state">No projects yet.</div>`;
   wireRecordButtons("projects", items, "project_id");
@@ -1069,7 +1055,7 @@ function renderBookChapters(items) {
         <div class="record-meta">${escapeHtml(it.authors)}${it.editor ? " &middot; Editor: " + escapeHtml(it.editor) : ""}</div>
         <div class="record-meta">${escapeHtml(it.book_title)}${it.publisher ? ", " + escapeHtml(it.publisher) : ""} &middot; ${escapeHtml(it.year)}${it.pages ? " &middot; pp. " + escapeHtml(it.pages) : ""}${it.doi ? ` &middot; <a href="${it.doi.startsWith("http") ? it.doi : "https://doi.org/" + it.doi}" target="_blank" rel="noopener">${escapeHtml(it.doi)}</a>` : ""} ${recordTagsHtml(it)}</div>
       </div>
-      ${recordActionsHtml("book-chapters", it.book_chapter_id, it.hidden)}
+      ${recordActionsHtml("book-chapters", it.book_chapter_id, it.hidden, it.cv_included)}
     </div>
   `).join("") : `<div class="empty-state">No book chapters added yet.</div>`;
   wireRecordButtons("book-chapters", items, "book_chapter_id");
@@ -1083,7 +1069,7 @@ function renderSoftware(items) {
         <div class="record-meta">${escapeHtml(it.reference)}</div>
         <div class="record-meta">${escapeHtml(it.year)}${it.downloads ? " &middot; " + escapeHtml(it.downloads) + " downloads" : ""}${it.cran_url ? ` &middot; <a href="${escapeHtml(it.cran_url)}" target="_blank" rel="noopener">CRAN</a>` : ""} ${recordTagsHtml(it)}</div>
       </div>
-      ${recordActionsHtml("software", it.software_id, it.hidden)}
+      ${recordActionsHtml("software", it.software_id, it.hidden, it.cv_included)}
     </div>
   `).join("") : `<div class="empty-state">No software packages yet.</div>`;
   wireRecordButtons("software", items, "software_id");
@@ -1096,7 +1082,7 @@ function renderCoursesTaught(items) {
         <h3 class="record-title">${escapeHtml(it.course_name)}</h3>
         <div class="record-meta">${recordTagsHtml(it)}</div>
       </div>
-      ${recordActionsHtml("courses-taught", it.course_id, it.hidden)}
+      ${recordActionsHtml("courses-taught", it.course_id, it.hidden, it.cv_included)}
     </div>
   `).join("") : `<div class="empty-state">No courses added yet.</div>`;
   wireRecordButtons("courses-taught", items, "course_id");
@@ -1110,10 +1096,33 @@ function renderStudentsGuided(items) {
         <div class="record-meta">${it.start_date ? escapeHtml(it.start_date) : ""}${it.end_date ? " &ndash; " + escapeHtml(it.end_date) : ""}</div>
         <div class="record-meta">${escapeHtml(it.description || "")} ${recordTagsHtml(it)}</div>
       </div>
-      ${recordActionsHtml("students-guided", it.student_id, it.hidden)}
+      ${recordActionsHtml("students-guided", it.student_id, it.hidden, it.cv_included)}
     </div>
   `).join("") : `<div class="empty-state">No students added yet.</div>`;
   wireRecordButtons("students-guided", items, "student_id");
+}
+
+async function setupSelectAllTick(sectionKey, items, idField, endpointFn, reloadFn) {
+  const tick = document.querySelector(`.section-header-tick[data-select-all="${sectionKey}"]`);
+  if (!tick) return;
+  const checkbox = tick.querySelector("input");
+  const allIncluded = items.length > 0 && items.every(it => !!it.cv_included);
+  checkbox.checked = allIncluded;
+  checkbox.onchange = async () => {
+    const newState = checkbox.checked;
+    const toToggle = items.filter(it => !!it.cv_included !== newState);
+    checkbox.disabled = true;
+    try {
+      for (const it of toToggle) {
+        await api(endpointFn(it[idField]), { method: "POST" });
+      }
+      await reloadFn();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      checkbox.disabled = false;
+    }
+  };
 }
 
 function wireRecordButtons(type, items, idField) {
@@ -1126,6 +1135,19 @@ function wireRecordButtons(type, items, idField) {
   document.querySelectorAll(`[data-record-toggle-hidden="${type}"]`).forEach(b => {
     b.addEventListener("click", () => toggleRecordHidden(type, b.dataset.id));
   });
+  document.querySelectorAll(`[data-record-cv="${type}"]`).forEach(b => {
+    b.addEventListener("change", () => toggleRecordCvIncluded(type, b.dataset.id));
+  });
+  setupSelectAllTick(type, items, idField, id => `/${type}/${id}/toggle-cv-included`, () => loadSection(type));
+}
+
+async function toggleRecordCvIncluded(type, id) {
+  try {
+    await api(`/${type}/${id}/toggle-cv-included`, { method: "POST" });
+    loadSection(type);
+  } catch (e) {
+    alert(e.message);
+  }
 }
 
 async function toggleRecordHidden(type, id) {

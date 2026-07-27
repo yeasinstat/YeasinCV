@@ -225,6 +225,49 @@ main { max-width: 1080px; margin: 0 auto; padding: 0 32px 80px; }
 
 .tag-selected { background: #FBF6E3; color: #8A6D00; }
 
+/* CV-inclusion tick — appears on every record card, every section heading, and every Home block/item when admin is logged in */
+.cv-tick {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper-raised);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.admin-logged-in .cv-tick { display: inline-flex; }
+.cv-tick input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--olive-dark);
+  cursor: pointer;
+  margin: 0;
+}
+.cv-tick:has(input:checked) { border-color: var(--olive-dark); background: #EEF0DE; }
+
+.section-header-tick {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.68rem;
+  color: var(--slate);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.admin-logged-in .section-header-tick { display: inline-flex; }
+.section-header-tick input[type="checkbox"] {
+  accent-color: var(--olive-dark);
+  cursor: pointer;
+}
+.section-heading-group { display: flex; align-items: center; gap: 14px; }
+
 .icon-btn {
   border: 1px solid var(--line);
   background: var(--paper-raised);

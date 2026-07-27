@@ -57,7 +57,10 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   <section class="section-panel hidden" id="section-publications">
     <section class="hero">
       <div class="hero-header">
-        <h2>Research Paper Records</h2>
+        <div class="section-heading-group">
+          <h2>Research Paper Records</h2>
+          <label class="section-header-tick hidden" data-select-all="publications"><input type="checkbox"> Include all in CV</label>
+        </div>
         <button class="btn-ghost hidden" id="addPublicationBtn">+ Add Publication</button>
       </div>
       <p class="hero-sub">Peer-reviewed journal articles, indexed by year, journal, quartile and research domain.</p>
@@ -126,7 +129,10 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   <!-- ============ AWARDS ============ -->
   <section class="section-panel hidden" id="section-awards">
     <div class="section-header">
-      <h2>Awards</h2>
+      <div class="section-heading-group">
+        <h2>Awards</h2>
+        <label class="section-header-tick hidden" data-select-all="awards"><input type="checkbox"> Include all in CV</label>
+      </div>
       <button class="btn-ghost hidden add-record-btn" data-type="awards">+ Add Award</button>
     </div>
     <div class="record-list" id="awardsList"></div>
@@ -135,7 +141,10 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   <!-- ============ PROJECTS ============ -->
   <section class="section-panel hidden" id="section-projects">
     <div class="section-header">
-      <h2>Projects</h2>
+      <div class="section-heading-group">
+        <h2>Projects</h2>
+        <label class="section-header-tick hidden" data-select-all="projects"><input type="checkbox"> Include all in CV</label>
+      </div>
       <button class="btn-ghost hidden add-record-btn" data-type="projects">+ Add Project</button>
     </div>
     <div class="record-list" id="projectsList"></div>
@@ -144,7 +153,10 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   <!-- ============ BOOK CHAPTERS ============ -->
   <section class="section-panel hidden" id="section-book-chapters">
     <div class="section-header">
-      <h2>Book Chapters</h2>
+      <div class="section-heading-group">
+        <h2>Book Chapters</h2>
+        <label class="section-header-tick hidden" data-select-all="book-chapters"><input type="checkbox"> Include all in CV</label>
+      </div>
       <button class="btn-ghost hidden add-record-btn" data-type="book-chapters">+ Add Book Chapter</button>
     </div>
     <div class="record-list" id="bookChaptersList"></div>
@@ -153,7 +165,10 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   <!-- ============ SOFTWARE ============ -->
   <section class="section-panel hidden" id="section-software">
     <div class="section-header">
-      <h2>Software / Packages</h2>
+      <div class="section-heading-group">
+        <h2>Software / Packages</h2>
+        <label class="section-header-tick hidden" data-select-all="software"><input type="checkbox"> Include all in CV</label>
+      </div>
       <div style="display:flex; gap:8px;">
         <button class="btn-ghost hidden" id="updateDownloadsBtn">&#8635; Update Download Counts</button>
         <button class="btn-ghost hidden add-record-btn" data-type="software">+ Add Package</button>
@@ -165,7 +180,10 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   <!-- ============ COURSES TAUGHT ============ -->
   <section class="section-panel hidden" id="section-courses-taught">
     <div class="section-header">
-      <h2>Courses Taught</h2>
+      <div class="section-heading-group">
+        <h2>Courses Taught</h2>
+        <label class="section-header-tick hidden" data-select-all="courses-taught"><input type="checkbox"> Include all in CV</label>
+      </div>
       <button class="btn-ghost hidden add-record-btn" data-type="courses-taught">+ Add Course Taught</button>
     </div>
     <div class="record-list" id="coursesTaughtList"></div>
@@ -174,7 +192,10 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   <!-- ============ STUDENTS GUIDED ============ -->
   <section class="section-panel hidden" id="section-students-guided">
     <div class="section-header">
-      <h2>Students Guided</h2>
+      <div class="section-heading-group">
+        <h2>Students Guided</h2>
+        <label class="section-header-tick hidden" data-select-all="students-guided"><input type="checkbox"> Include all in CV</label>
+      </div>
       <button class="btn-ghost hidden add-record-btn" data-type="students-guided">+ Add Student</button>
     </div>
     <div class="record-list" id="studentsGuidedList"></div>
