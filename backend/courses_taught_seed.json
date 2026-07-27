@@ -1,0 +1,11 @@
+[
+  {"sl_no": "1", "course_name": "STAT-574: Optimization Technique"},
+  {"sl_no": "2", "course_name": "STAT-560: Probability Theory"},
+  {"sl_no": "3", "course_name": "STAT-562: Statistical Inference"},
+  {"sl_no": "4", "course_name": "STAT-511: Statistical Methods for Applied Sciences"},
+  {"sl_no": "5", "course_name": "BIF-505: Statistical Methods for Applied Sciences (For Biosciences)"},
+  {"sl_no": "6", "course_name": "STAT-572: Regression Analysis"},
+  {"sl_no": "7", "course_name": "STAT-574: Time Series Analysis"},
+  {"sl_no": "8", "course_name": "STAT-601: Advanced Data Analytics"},
+  {"sl_no": "9", "course_name": "STAT-605: Modeling Techniques for Forecasting"}
+]

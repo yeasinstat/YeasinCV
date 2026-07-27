@@ -258,6 +258,8 @@ function loadSection(section) {
     "projects": { endpoint: "/projects", render: renderProjects, container: "projectsList" },
     "book-chapters": { endpoint: "/book-chapters", render: renderBookChapters, container: "bookChaptersList" },
     "software": { endpoint: "/software", render: renderSoftware, container: "softwareList" },
+    "courses-taught": { endpoint: "/courses-taught", render: renderCoursesTaught, container: "coursesTaughtList" },
+    "students-guided": { endpoint: "/students-guided", render: renderStudentsGuided, container: "studentsGuidedList" },
   };
   const cfg = map[section];
   if (!cfg) return;
@@ -1000,6 +1002,24 @@ const RECORD_SCHEMAS = {
       { key: "cran_url", label: "CRAN URL", full: true },
     ],
   },
+  "courses-taught": {
+    idField: "course_id",
+    label: "Course Taught",
+    fields: [
+      { key: "sl_no", label: "Sl. No." },
+      { key: "course_name", label: "Course", full: true },
+    ],
+  },
+  "students-guided": {
+    idField: "student_id",
+    label: "Student",
+    fields: [
+      { key: "name", label: "Name" },
+      { key: "start_date", label: "Start Date" },
+      { key: "end_date", label: "End Date" },
+      { key: "description", label: "Description", full: true },
+    ],
+  },
 };
 
 function recordTagsHtml(item) {
@@ -1068,6 +1088,33 @@ function renderSoftware(items) {
     </div>
   `).join("") : `<div class="empty-state">No software packages yet.</div>`;
   wireRecordButtons("software", items, "software_id");
+}
+
+function renderCoursesTaught(items) {
+  $("coursesTaughtList").innerHTML = items.length ? items.map(it => `
+    <div class="record-entry" data-id="${it.course_id}">
+      <div class="record-main">
+        <h3 class="record-title">${it.sl_no ? escapeHtml(it.sl_no) + ". " : ""}${escapeHtml(it.course_name)}</h3>
+        <div class="record-meta">${recordTagsHtml(it)}</div>
+      </div>
+      ${recordActionsHtml("courses-taught", it.course_id, it.hidden)}
+    </div>
+  `).join("") : `<div class="empty-state">No courses added yet.</div>`;
+  wireRecordButtons("courses-taught", items, "course_id");
+}
+
+function renderStudentsGuided(items) {
+  $("studentsGuidedList").innerHTML = items.length ? items.map(it => `
+    <div class="record-entry" data-id="${it.student_id}">
+      <div class="record-main">
+        <h3 class="record-title">${escapeHtml(it.name)}</h3>
+        <div class="record-meta">${it.start_date ? escapeHtml(it.start_date) : ""}${it.end_date ? " &ndash; " + escapeHtml(it.end_date) : ""}</div>
+        <div class="record-meta">${escapeHtml(it.description || "")} ${recordTagsHtml(it)}</div>
+      </div>
+      ${recordActionsHtml("students-guided", it.student_id, it.hidden)}
+    </div>
+  `).join("") : `<div class="empty-state">No students added yet.</div>`;
+  wireRecordButtons("students-guided", items, "student_id");
 }
 
 function wireRecordButtons(type, items, idField) {

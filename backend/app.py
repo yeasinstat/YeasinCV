@@ -161,6 +161,24 @@ CREATE TABLE IF NOT EXISTS software (
     created_at   TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS courses_taught (
+    course_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    sl_no       TEXT,
+    course_name TEXT,
+    hidden      INTEGER DEFAULT 0,
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS students_guided (
+    student_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT,
+    start_date  TEXT,
+    end_date    TEXT,
+    description TEXT DEFAULT '',
+    hidden      INTEGER DEFAULT 0,
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS journal_scores (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     journal_name   TEXT UNIQUE,
@@ -258,6 +276,8 @@ PROJECTS_SEED_PATH = os.path.join(BASE_DIR, "projects_seed.json")
 SOFTWARE_SEED_PATH = os.path.join(BASE_DIR, "software_seed.json")
 AWARDS_SEED_PATH = os.path.join(BASE_DIR, "awards_seed.json")
 BOOK_CHAPTERS_SEED_PATH = os.path.join(BASE_DIR, "book_chapters_seed.json")
+COURSES_TAUGHT_SEED_PATH = os.path.join(BASE_DIR, "courses_taught_seed.json")
+STUDENTS_GUIDED_SEED_PATH = os.path.join(BASE_DIR, "students_guided_seed.json")
 
 
 DB_BACKUP_PATH = os.path.join(BASE_DIR, "research_backup.db")
@@ -318,6 +338,8 @@ def init_db(force_reseed=False):
         (PROJECTS_SEED_PATH, "projects", ["investigators", "project_title", "funding_agency", "date_start", "date_end", "status"]),
         (BOOK_CHAPTERS_SEED_PATH, "book_chapters", ["title", "authors", "editor", "book_title", "publisher", "year", "pages", "isbn", "doi"]),
         (SOFTWARE_SEED_PATH, "software", ["package_name", "reference", "year", "downloads", "cran_url"]),
+        (COURSES_TAUGHT_SEED_PATH, "courses_taught", ["sl_no", "course_name"]),
+        (STUDENTS_GUIDED_SEED_PATH, "students_guided", ["name", "start_date", "end_date", "description"]),
     ]:
         if not os.path.exists(path):
             continue
@@ -1222,6 +1244,18 @@ SIMPLE_TABLES = {
         "id_col": "software_id",
         "columns": ["package_name", "reference", "year", "downloads", "cran_url"],
         "order_by": "year DESC",
+    },
+    "courses-taught": {
+        "table": "courses_taught",
+        "id_col": "course_id",
+        "columns": ["sl_no", "course_name"],
+        "order_by": "CAST(sl_no AS INTEGER) ASC",
+    },
+    "students-guided": {
+        "table": "students_guided",
+        "id_col": "student_id",
+        "columns": ["name", "start_date", "end_date", "description"],
+        "order_by": "start_date DESC",
     },
 }
 
