@@ -176,11 +176,24 @@ CREATE TABLE IF NOT EXISTS courses_taught (
 );
 
 CREATE TABLE IF NOT EXISTS students_guided (
-    student_id  INTEGER PRIMARY KEY AUTOINCREMENT,
-    name        TEXT,
-    start_date  TEXT,
-    end_date    TEXT,
-    description TEXT DEFAULT '',
+    student_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT,
+    student_type TEXT DEFAULT '',
+    start_date   TEXT,
+    end_date     TEXT,
+    description  TEXT DEFAULT '',
+    hidden       INTEGER DEFAULT 0,
+    cv_included  INTEGER DEFAULT 1,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS technology (
+    tech_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    category    TEXT DEFAULT 'Technology',
+    authors     TEXT,
+    year        TEXT,
+    title       TEXT,
+    id_number   TEXT,
     hidden      INTEGER DEFAULT 0,
     cv_included INTEGER DEFAULT 1,
     created_at  TEXT DEFAULT (datetime('now'))
@@ -278,11 +291,16 @@ def migrate_db(conn):
     conn.commit()
 
     # cv_included on every simple-CRUD record table (awards, projects,
-    # book_chapters, software, courses_taught, students_guided)
-    for _tbl in ("awards", "projects", "book_chapters", "software", "courses_taught", "students_guided"):
+    # book_chapters, software, courses_taught, students_guided, technology)
+    for _tbl in ("awards", "projects", "book_chapters", "software", "courses_taught", "students_guided", "technology"):
         _cols = {row[1] for row in conn.execute(f"PRAGMA table_info({_tbl})")}
         if "cv_included" not in _cols:
             conn.execute(f"ALTER TABLE {_tbl} ADD COLUMN cv_included INTEGER DEFAULT 1")
+    conn.commit()
+
+    sg_cols = {row[1] for row in conn.execute("PRAGMA table_info(students_guided)")}
+    if "student_type" not in sg_cols:
+        conn.execute("ALTER TABLE students_guided ADD COLUMN student_type TEXT DEFAULT ''")
     conn.commit()
 
     js_cols = {row[1] for row in conn.execute("PRAGMA table_info(journal_scores)")}
@@ -297,6 +315,7 @@ AWARDS_SEED_PATH = os.path.join(BASE_DIR, "awards_seed.json")
 BOOK_CHAPTERS_SEED_PATH = os.path.join(BASE_DIR, "book_chapters_seed.json")
 COURSES_TAUGHT_SEED_PATH = os.path.join(BASE_DIR, "courses_taught_seed.json")
 STUDENTS_GUIDED_SEED_PATH = os.path.join(BASE_DIR, "students_guided_seed.json")
+TECHNOLOGY_SEED_PATH = os.path.join(BASE_DIR, "technology_seed.json")
 
 
 DB_BACKUP_PATH = os.path.join(BASE_DIR, "research_backup.db")
@@ -358,7 +377,8 @@ def init_db(force_reseed=False):
         (BOOK_CHAPTERS_SEED_PATH, "book_chapters", ["title", "authors", "editor", "book_title", "publisher", "year", "pages", "isbn", "doi"]),
         (SOFTWARE_SEED_PATH, "software", ["package_name", "reference", "year", "downloads", "cran_url"]),
         (COURSES_TAUGHT_SEED_PATH, "courses_taught", ["course_name"]),
-        (STUDENTS_GUIDED_SEED_PATH, "students_guided", ["name", "start_date", "end_date", "description"]),
+        (STUDENTS_GUIDED_SEED_PATH, "students_guided", ["name", "student_type", "start_date", "end_date", "description"]),
+        (TECHNOLOGY_SEED_PATH, "technology", ["category", "authors", "year", "title", "id_number"]),
     ]:
         if not os.path.exists(path):
             continue
@@ -1287,8 +1307,14 @@ SIMPLE_TABLES = {
     "students-guided": {
         "table": "students_guided",
         "id_col": "student_id",
-        "columns": ["name", "start_date", "end_date", "description"],
+        "columns": ["name", "student_type", "start_date", "end_date", "description"],
         "order_by": "start_date DESC",
+    },
+    "technology": {
+        "table": "technology",
+        "id_col": "tech_id",
+        "columns": ["category", "authors", "year", "title", "id_number"],
+        "order_by": "tech_id ASC",
     },
 }
 
@@ -2063,6 +2089,13 @@ def _build_cv_pdf():
             story.append(Paragraph(date_bit, meta_style))
             if r["description"]:
                 story.append(Paragraph(r["description"], body_style))
+
+    # ---- Technology / Patents ----
+    rows = db.execute("SELECT * FROM technology WHERE cv_included = 1 ORDER BY tech_id ASC").fetchall()
+    if rows:
+        section_header(f"Technology / Patents ({len(rows)})")
+        for r in rows:
+            story.append(Paragraph(f"{r['authors']} ({r['year']}). {r['title']}. [{r['category']} No. {r['id_number']}]", body_style))
 
     doc.build(story)
     buf.seek(0)

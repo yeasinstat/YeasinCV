@@ -47,7 +47,7 @@ function escapeHtml(str) {
 
 // ---------------- profile ----------------
 // ============ Profile Blocks System ============
-const DEFAULT_BLOCK_ORDER = ["header", "contact", "research_interest", "education", "accolades", "employment", "other_records"];
+const DEFAULT_BLOCK_ORDER = ["header", "research_interest", "education", "accolades", "employment", "other_records"];
 let profileLayout = {}; // { block_order: [...], hidden_blocks: [...], items: { education: { order: [...], hidden: [...] } } }
 let scientistData = null;
 
@@ -83,6 +83,7 @@ function renderProfileBlocks() {
 
   const blockRenderers = {
     header: () => {
+      const emailText = (s.email || []).join(", ");
       const inner = `
         <div class="block-header-inner">
           <div class="block-photo-col">
@@ -97,18 +98,10 @@ function renderProfileBlocks() {
           <div>
             <h1 class="block-name">${escapeHtml(s.name)}</h1>
             <p class="block-role">${escapeHtml(s.designation)} &middot; ${escapeHtml(s.institute)}</p>
-            <p class="block-address">${escapeHtml(s.address || "")}</p>
+            <p class="block-address">Email: ${escapeHtml(emailText)}</p>
           </div>
         </div>`;
       return { title: "", html: inner };
-    },
-
-    contact: () => {
-      const parts = [];
-      if (s.dob) parts.push(`<div class="block-contact-item"><span class="block-contact-label">DOB</span><span class="block-contact-value">${escapeHtml(s.dob)}</span></div>`);
-      if (s.mobile?.length) parts.push(`<div class="block-contact-item"><span class="block-contact-label">Mobile</span><span class="block-contact-value">${s.mobile.map(escapeHtml).join(" / ")}</span></div>`);
-      if (s.email?.length) parts.push(`<div class="block-contact-item"><span class="block-contact-label">Email</span><span class="block-contact-value">${s.email.map(escapeHtml).join(", ")}</span></div>`);
-      return { title: "Contact", html: `<div class="block-contact-grid">${parts.join("")}</div>` };
     },
 
     research_interest: () => ({
@@ -321,6 +314,7 @@ function loadSection(section) {
     "software": { endpoint: "/software", render: renderSoftware, container: "softwareList" },
     "courses-taught": { endpoint: "/courses-taught", render: renderCoursesTaught, container: "coursesTaughtList" },
     "students-guided": { endpoint: "/students-guided", render: renderStudentsGuided, container: "studentsGuidedList" },
+    "technology": { endpoint: "/technology", render: renderTechnology, container: "technologyList" },
   };
   const cfg = map[section];
   if (!cfg) return;
@@ -997,9 +991,21 @@ const RECORD_SCHEMAS = {
     label: "Student",
     fields: [
       { key: "name", label: "Name" },
+      { key: "student_type", label: "Student Type", options: ["PhD", "M.Sc.", "B.Sc.", "Post-Doc", "Other"] },
       { key: "start_date", label: "Start Date" },
       { key: "end_date", label: "End Date" },
       { key: "description", label: "Description", full: true },
+    ],
+  },
+  "technology": {
+    idField: "tech_id",
+    label: "Technology / Patent",
+    fields: [
+      { key: "category", label: "Category", options: ["Patent", "Technology"] },
+      { key: "authors", label: "Authors", full: true },
+      { key: "year", label: "Year" },
+      { key: "id_number", label: "Patent / Accession No." },
+      { key: "title", label: "Title", full: true },
     ],
   },
 };
@@ -1092,7 +1098,7 @@ function renderStudentsGuided(items) {
   $("studentsGuidedList").innerHTML = items.length ? items.map(it => `
     <div class="record-entry" data-id="${it.student_id}">
       <div class="record-main">
-        <h3 class="record-title">${escapeHtml(it.name)}</h3>
+        <h3 class="record-title">${escapeHtml(it.name)}${it.student_type ? ` <span class="tag tag-domain">${escapeHtml(it.student_type)}</span>` : ""}</h3>
         <div class="record-meta">${it.start_date ? escapeHtml(it.start_date) : ""}${it.end_date ? " &ndash; " + escapeHtml(it.end_date) : ""}</div>
         <div class="record-meta">${escapeHtml(it.description || "")} ${recordTagsHtml(it)}</div>
       </div>
@@ -1100,6 +1106,30 @@ function renderStudentsGuided(items) {
     </div>
   `).join("") : `<div class="empty-state">No students added yet.</div>`;
   wireRecordButtons("students-guided", items, "student_id");
+}
+
+function renderTechnology(items) {
+  const patents = items.filter(it => it.category === "Patent");
+  const tech = items.filter(it => it.category !== "Patent");
+
+  const renderGroup = (title, groupItems) => {
+    if (!groupItems.length) return "";
+    const rows = groupItems.map(it => `
+      <div class="record-entry" data-id="${it.tech_id}">
+        <div class="record-main">
+          <h3 class="record-title">${escapeHtml(it.title)}</h3>
+          <div class="record-meta">${escapeHtml(it.authors)}</div>
+          <div class="record-meta">${escapeHtml(it.year)} &middot; ${it.category === "Patent" ? "Patent No." : "Accession No."} ${escapeHtml(it.id_number)} ${recordTagsHtml(it)}</div>
+        </div>
+        ${recordActionsHtml("technology", it.tech_id, it.hidden, it.cv_included)}
+      </div>
+    `).join("");
+    return `<h3 class="tech-group-title">${title}</h3>${rows}`;
+  };
+
+  const html = renderGroup("Design Patent Received", patents) + renderGroup("Technology (ICAR Accredited)", tech);
+  $("technologyList").innerHTML = html || `<div class="empty-state">No technology or patents added yet.</div>`;
+  wireRecordButtons("technology", items, "tech_id");
 }
 
 async function setupSelectAllTick(sectionKey, items, idField, endpointFn, reloadFn) {
@@ -1173,7 +1203,9 @@ function openRecordModal(type, id, items) {
   $("recordFormGrid").innerHTML = schema.fields.map(f => `
     <div style="${f.full ? "grid-column: 1 / -1;" : ""}">
       <label for="r_${f.key}">${escapeHtml(f.label)}</label>
-      <input id="r_${f.key}" value="${escapeHtml(record ? record[f.key] : "")}">
+      ${f.options
+        ? `<select id="r_${f.key}">${f.options.map(o => `<option value="${escapeHtml(o)}" ${record && record[f.key] === o ? "selected" : ""}>${escapeHtml(o)}</option>`).join("")}</select>`
+        : `<input id="r_${f.key}" value="${escapeHtml(record ? record[f.key] : "")}">`}
     </div>
   `).join("");
   openModal("recordModalBackdrop");
