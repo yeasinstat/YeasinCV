@@ -276,6 +276,48 @@ CREATE TABLE IF NOT EXISTS manuals (
     created_at   TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS conference_papers (
+    paper_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER DEFAULT 1,
+    authors      TEXT,
+    year         TEXT,
+    title        TEXT,
+    details      TEXT DEFAULT '',
+    hidden       INTEGER DEFAULT 0,
+    cv_included  INTEGER DEFAULT 1,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS trainings_attended (
+    entry_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER DEFAULT 1,
+    description  TEXT,
+    year         TEXT DEFAULT '',
+    hidden       INTEGER DEFAULT 0,
+    cv_included  INTEGER DEFAULT 1,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS trainings_organised (
+    entry_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER DEFAULT 1,
+    description  TEXT,
+    year         TEXT DEFAULT '',
+    hidden       INTEGER DEFAULT 0,
+    cv_included  INTEGER DEFAULT 1,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS invited_talks (
+    talk_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER DEFAULT 1,
+    description  TEXT,
+    year         TEXT DEFAULT '',
+    hidden       INTEGER DEFAULT 0,
+    cv_included  INTEGER DEFAULT 1,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS research_team (
     member_id     INTEGER PRIMARY KEY AUTOINCREMENT,
     scientist_id  INTEGER DEFAULT 1,
@@ -385,7 +427,8 @@ def migrate_db(conn):
     # cv_included on every simple-CRUD record table (awards, projects,
     # book_chapters, software, courses_taught, students_guided, technology)
     for _tbl in ("awards", "projects", "book_chapters", "software", "courses_taught", "students_guided", "technology",
-                 "popular_articles", "policy_papers", "manuals"):
+                 "popular_articles", "policy_papers", "manuals",
+                 "conference_papers", "trainings_attended", "trainings_organised", "invited_talks"):
         _cols = {row[1] for row in conn.execute(f"PRAGMA table_info({_tbl})")}
         if "cv_included" not in _cols:
             conn.execute(f"ALTER TABLE {_tbl} ADD COLUMN cv_included INTEGER DEFAULT 1")
@@ -584,6 +627,10 @@ def init_db(force_reseed=False):
         "popular_articles": ["authors", "year", "title", "publication", "details"],
         "policy_papers": ["authors", "year", "title", "publisher", "id_number"],
         "manuals": ["authors", "year", "title", "publisher"],
+        "conference_papers": ["authors", "year", "title", "details"],
+        "trainings_attended": ["description", "year"],
+        "trainings_organised": ["description", "year"],
+        "invited_talks": ["description", "year"],
     }
     for scientist_id, path_prefix in ((1, ""), (2, "ranjit_")):
         for table, cols in simple_seed_map.items():
@@ -1993,6 +2040,30 @@ SIMPLE_TABLES = {
         "columns": ["authors", "year", "title", "publisher"],
         "order_by": "manual_id ASC",
     },
+    "conference-papers": {
+        "table": "conference_papers",
+        "id_col": "paper_id",
+        "columns": ["authors", "year", "title", "details"],
+        "order_by": "paper_id ASC",
+    },
+    "trainings-attended": {
+        "table": "trainings_attended",
+        "id_col": "entry_id",
+        "columns": ["description", "year"],
+        "order_by": "entry_id ASC",
+    },
+    "trainings-organised": {
+        "table": "trainings_organised",
+        "id_col": "entry_id",
+        "columns": ["description", "year"],
+        "order_by": "entry_id ASC",
+    },
+    "invited-talks": {
+        "table": "invited_talks",
+        "id_col": "talk_id",
+        "columns": ["description", "year"],
+        "order_by": "talk_id ASC",
+    },
 }
 
 
@@ -2860,6 +2931,37 @@ def _build_cv_pdf(scientist_id=1):
             if r["publisher"]:
                 bits += f" {esc(r['publisher'])}."
             story.append(Paragraph(bits, unicode_body_style))
+
+    # ---- Conference Papers Presented ----
+    rows = db.execute("SELECT * FROM conference_papers WHERE scientist_id = ? AND cv_included = 1 ORDER BY paper_id ASC", (scientist_id,)).fetchall()
+    if rows:
+        section_header(f"Conference Papers Presented ({len(rows)})")
+        for r in rows:
+            bits = f"{esc(r['authors'])} ({esc(r['year'])}). {esc(r['title'])}."
+            if r["details"]:
+                bits += f" {esc(r['details'])}"
+            story.append(Paragraph(bits, body_style))
+
+    # ---- Training / Conference Attended ----
+    rows = db.execute("SELECT * FROM trainings_attended WHERE scientist_id = ? AND cv_included = 1 ORDER BY entry_id ASC", (scientist_id,)).fetchall()
+    if rows:
+        section_header(f"Training / Conference Attended ({len(rows)})")
+        for r in rows:
+            story.append(Paragraph(esc(r["description"]), body_style))
+
+    # ---- Training / Conference Organised ----
+    rows = db.execute("SELECT * FROM trainings_organised WHERE scientist_id = ? AND cv_included = 1 ORDER BY entry_id ASC", (scientist_id,)).fetchall()
+    if rows:
+        section_header(f"Training / Conference Organised ({len(rows)})")
+        for r in rows:
+            story.append(Paragraph(esc(r["description"]), unicode_body_style))
+
+    # ---- Invited Talks ----
+    rows = db.execute("SELECT * FROM invited_talks WHERE scientist_id = ? AND cv_included = 1 ORDER BY talk_id ASC", (scientist_id,)).fetchall()
+    if rows:
+        section_header(f"Invited Talks ({len(rows)})")
+        for r in rows:
+            story.append(Paragraph(esc(r["description"]), unicode_body_style))
 
     doc.build(story)
     buf.seek(0)

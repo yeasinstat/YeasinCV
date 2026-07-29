@@ -47,6 +47,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   <button class="nav-tab" data-section="software">Software / Packages</button>
   <button class="nav-tab" data-section="courses-taught">Courses Taught</button>
   <button class="nav-tab" data-section="students-guided">Students Guided</button>
+  <button class="nav-tab" data-section="training">Training</button>
   <button class="nav-tab" data-section="technology">Technology</button>
 </nav>
 
@@ -263,6 +264,54 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
       <button class="btn-ghost hidden add-record-btn" data-type="technology">+ Add Technology/Patent</button>
     </div>
     <div class="record-list" id="technologyList"></div>
+  </section>
+
+  <!-- ============ TRAINING ============ -->
+  <section class="section-panel hidden" id="section-training">
+    <div class="section-header">
+      <div class="section-heading-group">
+        <h2>Training</h2>
+      </div>
+    </div>
+
+    <div class="pub-subtabs" id="trainingSubtabs">
+      <button class="pub-subtab active" data-training-sub="conference-papers">Conference Paper</button>
+      <button class="pub-subtab" data-training-sub="trainings-attended">Training/Conference Attended</button>
+      <button class="pub-subtab" data-training-sub="trainings-organised">Training/Conference Organised</button>
+      <button class="pub-subtab" data-training-sub="invited-talks">Invited Talk</button>
+    </div>
+
+    <div class="other-pub-panel" data-training-panel="conference-papers">
+      <div class="section-header">
+        <label class="section-header-tick hidden" data-select-all="conference-papers"><input type="checkbox"> Include all in CV</label>
+        <button class="btn-ghost hidden add-record-btn" data-type="conference-papers">+ Conference Paper</button>
+      </div>
+      <div class="record-list" id="conferencePapersList"></div>
+    </div>
+
+    <div class="other-pub-panel hidden" data-training-panel="trainings-attended">
+      <div class="section-header">
+        <label class="section-header-tick hidden" data-select-all="trainings-attended"><input type="checkbox"> Include all in CV</label>
+        <button class="btn-ghost hidden add-record-btn" data-type="trainings-attended">+ Training/Conference Attended</button>
+      </div>
+      <div class="record-list" id="trainingsAttendedList"></div>
+    </div>
+
+    <div class="other-pub-panel hidden" data-training-panel="trainings-organised">
+      <div class="section-header">
+        <label class="section-header-tick hidden" data-select-all="trainings-organised"><input type="checkbox"> Include all in CV</label>
+        <button class="btn-ghost hidden add-record-btn" data-type="trainings-organised">+ Training/Conference Organised</button>
+      </div>
+      <div class="record-list" id="trainingsOrganisedList"></div>
+    </div>
+
+    <div class="other-pub-panel hidden" data-training-panel="invited-talks">
+      <div class="section-header">
+        <label class="section-header-tick hidden" data-select-all="invited-talks"><input type="checkbox"> Include all in CV</label>
+        <button class="btn-ghost hidden add-record-btn" data-type="invited-talks">+ Invited Talk</button>
+      </div>
+      <div class="record-list" id="invitedTalksList"></div>
+    </div>
   </section>
 
 </main>

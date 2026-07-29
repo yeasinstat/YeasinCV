@@ -647,6 +647,7 @@ function loadSection(section) {
   if (section === "publications") { loadPapers(); return; }
   if (section === "personal-details") { renderProfileBlocks("personalDetailsBlocks", PERSONAL_BLOCK_ORDER); return; }
   if (section === "book-chapters") { loadOtherPublications(); return; }
+  if (section === "training") { loadTraining(); return; }
   const map = {
     "awards": { endpoint: "/awards", render: renderAwards, container: "awardsList" },
     "projects": { endpoint: "/projects", render: renderProjects, container: "projectsList" },
@@ -676,6 +677,20 @@ function loadOtherPublications() {
   });
 }
 
+function loadTraining() {
+  const parts = [
+    { endpoint: "/conference-papers", render: renderConferencePapers, container: "conferencePapersList" },
+    { endpoint: "/trainings-attended", render: renderTrainingsAttended, container: "trainingsAttendedList" },
+    { endpoint: "/trainings-organised", render: renderTrainingsOrganised, container: "trainingsOrganisedList" },
+    { endpoint: "/invited-talks", render: renderInvitedTalks, container: "invitedTalksList" },
+  ];
+  parts.forEach(cfg => {
+    api(cfg.endpoint).then(items => cfg.render(items)).catch(() => {
+      $(cfg.container).innerHTML = `<div class="empty-state">Could not load this section.</div>`;
+    });
+  });
+}
+
 document.querySelectorAll('#otherPubSubtabs .pub-subtab').forEach(tab => {
   tab.addEventListener("click", () => {
     document.querySelectorAll('#otherPubSubtabs .pub-subtab').forEach(t => t.classList.remove("active"));
@@ -683,6 +698,17 @@ document.querySelectorAll('#otherPubSubtabs .pub-subtab').forEach(tab => {
     const key = tab.dataset.otherPub;
     document.querySelectorAll('.other-pub-panel').forEach(panel => {
       panel.classList.toggle("hidden", panel.dataset.otherPubPanel !== key);
+    });
+  });
+});
+
+document.querySelectorAll('#trainingSubtabs .pub-subtab').forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll('#trainingSubtabs .pub-subtab').forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    const key = tab.dataset.trainingSub;
+    document.querySelectorAll('[data-training-panel]').forEach(panel => {
+      panel.classList.toggle("hidden", panel.dataset.trainingPanel !== key);
     });
   });
 });
@@ -1459,6 +1485,40 @@ const RECORD_SCHEMAS = {
       { key: "publisher", label: "Publisher", full: true },
     ],
   },
+  "conference-papers": {
+    idField: "paper_id",
+    label: "Conference Paper",
+    fields: [
+      { key: "authors", label: "Authors", full: true },
+      { key: "year", label: "Year" },
+      { key: "title", label: "Title", full: true },
+      { key: "details", label: "Conference / Event Details", full: true },
+    ],
+  },
+  "trainings-attended": {
+    idField: "entry_id",
+    label: "Training/Conference Attended",
+    fields: [
+      { key: "year", label: "Year" },
+      { key: "description", label: "Description", full: true },
+    ],
+  },
+  "trainings-organised": {
+    idField: "entry_id",
+    label: "Training/Conference Organised",
+    fields: [
+      { key: "year", label: "Year" },
+      { key: "description", label: "Description", full: true },
+    ],
+  },
+  "invited-talks": {
+    idField: "talk_id",
+    label: "Invited Talk",
+    fields: [
+      { key: "year", label: "Year" },
+      { key: "description", label: "Description", full: true },
+    ],
+  },
 };
 
 function recordTagsHtml(item) {
@@ -1558,6 +1618,56 @@ function renderManuals(items) {
     </div>
   `).join("") : `<div class="empty-state">No manuals added yet.</div>`;
   wireRecordButtons("manuals", items, "manual_id");
+}
+
+function renderConferencePapers(items) {
+  $("conferencePapersList").innerHTML = items.length ? items.map(it => `
+    <div class="record-entry" data-id="${it.paper_id}">
+      <div class="record-main">
+        <h3 class="record-title">${escapeHtml(it.title)}</h3>
+        <div class="record-meta">${escapeHtml(it.authors)}${it.year ? " &middot; " + escapeHtml(it.year) : ""}</div>
+        <div class="record-meta">${escapeHtml(it.details)} ${recordTagsHtml(it)}</div>
+      </div>
+      ${recordActionsHtml("conference-papers", it.paper_id, it.hidden, it.cv_included)}
+    </div>
+  `).join("") : `<div class="empty-state">No conference papers added yet.</div>`;
+  wireRecordButtons("conference-papers", items, "paper_id");
+}
+
+function renderTrainingsAttended(items) {
+  $("trainingsAttendedList").innerHTML = items.length ? items.map(it => `
+    <div class="record-entry" data-id="${it.entry_id}">
+      <div class="record-main">
+        <div class="record-meta">${it.year ? "<strong>" + escapeHtml(it.year) + "</strong> &middot; " : ""}${escapeHtml(it.description)} ${recordTagsHtml(it)}</div>
+      </div>
+      ${recordActionsHtml("trainings-attended", it.entry_id, it.hidden, it.cv_included)}
+    </div>
+  `).join("") : `<div class="empty-state">No trainings/conferences attended added yet.</div>`;
+  wireRecordButtons("trainings-attended", items, "entry_id");
+}
+
+function renderTrainingsOrganised(items) {
+  $("trainingsOrganisedList").innerHTML = items.length ? items.map(it => `
+    <div class="record-entry" data-id="${it.entry_id}">
+      <div class="record-main">
+        <div class="record-meta">${it.year ? "<strong>" + escapeHtml(it.year) + "</strong> &middot; " : ""}${escapeHtml(it.description)} ${recordTagsHtml(it)}</div>
+      </div>
+      ${recordActionsHtml("trainings-organised", it.entry_id, it.hidden, it.cv_included)}
+    </div>
+  `).join("") : `<div class="empty-state">No trainings/conferences organised added yet.</div>`;
+  wireRecordButtons("trainings-organised", items, "entry_id");
+}
+
+function renderInvitedTalks(items) {
+  $("invitedTalksList").innerHTML = items.length ? items.map(it => `
+    <div class="record-entry" data-id="${it.talk_id}">
+      <div class="record-main">
+        <div class="record-meta">${it.year ? "<strong>" + escapeHtml(it.year) + "</strong> &middot; " : ""}${escapeHtml(it.description)} ${recordTagsHtml(it)}</div>
+      </div>
+      ${recordActionsHtml("invited-talks", it.talk_id, it.hidden, it.cv_included)}
+    </div>
+  `).join("") : `<div class="empty-state">No invited talks added yet.</div>`;
+  wireRecordButtons("invited-talks", items, "talk_id");
 }
 
 function renderSoftware(items) {
