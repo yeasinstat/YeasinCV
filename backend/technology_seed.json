@@ -1,12 +1,100 @@
 [
-  {"category": "Patent", "authors": "Wani, OA, Wani, AIA., Hussain, N., Hussain, M., Fatima, N., Hussain, M., Babu, S., Yeasin, M., and Ganai, NA.", "year": "2024", "title": "Aquatic Nutrient Removal Device for Agricultural Use", "id_number": "415267-001"},
-  {"category": "Patent", "authors": "Wani, OA, Wani, AIA., Ali, A., Nazir, F., Nazir, F., Babu, S., Yeasin, M., Hussain, S., Kanth, RH. and Ganai, NA.", "year": "2024", "title": "Smart Medicine Reminder Device", "id_number": "415269-001"},
-  {"category": "Patent", "authors": "Wani, OA, Hussain, K., Mahdi, SS., Babu, S., Yeasin, M., Nazir F., Malik RA, and Ganai, NA.", "year": "2024", "title": "Portable Smart Vegetable Agriculture System", "id_number": "415268-001"},
-  {"category": "Patent", "authors": "Wani, OA, Wani, Manikanna P., AIA., Babu, S., Nazir, F., Nazir, F., Singh, R., Yeasin, M., Manzoor T.", "year": "2024", "title": "Solar Bug Trap and Tracker", "id_number": "417208-001"},
-  {"category": "Patent", "authors": "Wani, OA, Wani, AIA., Ganai NA, Nazir, F., Babu, S., Nazir, F., Kanth RH, Hussain, N., Yeasin, M.", "year": "2024", "title": "Automated Bird Scarer", "id_number": "417207-001"},
-  {"category": "Technology", "authors": "Paul, R.K., Yeasin, M., Garai, S., and Paul, A.K.", "year": "2024", "title": "WaveML: Wavelet Based Machine Learning Techniques for Time Series Forecasting", "id_number": "ICAR-AED-IASRI-Model-2024-030"},
-  {"category": "Technology", "authors": "Paul, R.K., Yeasin, M., Birthal P.S., Paul, A.K., Roy, H.S. and Kumar, P.", "year": "2024", "title": "Tools for Evaluating Impact of Pandemics on Agricultural Prices", "id_number": "ICAR-AED-IASRI-Methodology-2024-043"},
-  {"category": "Technology", "authors": "Paul, R.K., Yeasin, M., Paul, A.K., Roy, H.S. and Kumar, P.", "year": "2024", "title": "TSEnsemble: Ensemble Algorithm for Time Series Forecasting", "id_number": "ICAR-AED-IASRI-Methodology-2024-040"},
-  {"category": "Technology", "authors": "Yeasin, M. and Paul, R.K.", "year": "2024", "title": "OptiSembleForecasting: Optimization-based Ensemble Forecasting using MCS Algorithm and PCA-based Error Index", "id_number": "ICAR-AED-IASRI-Methodology-2024-025"},
-  {"category": "Technology", "authors": "Bhat, A.G., Viswanathan, C., Hasan, M., Singh, D.K., Sahoo, R.N., and Yeasin, M.", "year": "2025", "title": "IoT and sensor-based hydroponics vertical farming management system", "id_number": "ICAR-CS-IARI-Technology-2025-002"}
+  {
+    "category": "Patent",
+    "authors": "Wani, OA, Wani, AIA., Hussain, N., Hussain, M., Fatima, N., Hussain, M., Babu, S., Yeasin, M., and Ganai, NA.",
+    "year": "2024",
+    "title": "Aquatic Nutrient Removal Device for Agricultural Use",
+    "id_number": "415267-001"
+  },
+  {
+    "category": "Patent",
+    "authors": "Wani, OA, Wani, AIA., Ali, A., Nazir, F., Nazir, F., Babu, S., Yeasin, M., Hussain, S., Kanth, RH. and Ganai, NA.",
+    "year": "2024",
+    "title": "Smart Medicine Reminder Device",
+    "id_number": "415269-001"
+  },
+  {
+    "category": "Patent",
+    "authors": "Wani, OA, Hussain, K., Mahdi, SS., Babu, S., Yeasin, M., Nazir F., Malik RA, and Ganai, NA.",
+    "year": "2024",
+    "title": "Portable Smart Vegetable Agriculture System",
+    "id_number": "415268-001"
+  },
+  {
+    "category": "Patent",
+    "authors": "Wani, OA, Wani, Manikanna P., AIA., Babu, S., Nazir, F., Nazir, F., Singh, R., Yeasin, M., Manzoor T.",
+    "year": "2024",
+    "title": "Solar Bug Trap and Tracker",
+    "id_number": "417208-001"
+  },
+  {
+    "category": "Patent",
+    "authors": "Wani, OA, Wani, AIA., Ganai NA, Nazir, F., Babu, S., Nazir, F., Kanth RH, Hussain, N., Yeasin, M.",
+    "year": "2024",
+    "title": "Automated Bird Scarer",
+    "id_number": "417207-001"
+  },
+  {
+    "category": "Technology",
+    "authors": "Paul, R.K., Yeasin, M., Garai, S., and Paul, A.K.",
+    "year": "2024",
+    "title": "WaveML: Wavelet Based Machine Learning Techniques for Time Series Forecasting",
+    "id_number": "ICAR-AED-IASRI-Model-2024-030"
+  },
+  {
+    "category": "Technology",
+    "authors": "Paul, R.K., Yeasin, M., Birthal P.S., Paul, A.K., Roy, H.S. and Kumar, P.",
+    "year": "2024",
+    "title": "Tools for Evaluating Impact of Pandemics on Agricultural Prices",
+    "id_number": "ICAR-AED-IASRI-Methodology-2024-043"
+  },
+  {
+    "category": "Technology",
+    "authors": "Paul, R.K., Yeasin, M., Paul, A.K., Roy, H.S. and Kumar, P.",
+    "year": "2024",
+    "title": "TSEnsemble: Ensemble Algorithm for Time Series Forecasting",
+    "id_number": "ICAR-AED-IASRI-Methodology-2024-040"
+  },
+  {
+    "category": "Technology",
+    "authors": "Yeasin, M. and Paul, R.K.",
+    "year": "2024",
+    "title": "OptiSembleForecasting: Optimization-based Ensemble Forecasting using MCS Algorithm and PCA-based Error Index",
+    "id_number": "ICAR-AED-IASRI-Methodology-2024-025"
+  },
+  {
+    "category": "Technology",
+    "authors": "Bhat, A.G., Viswanathan, C., Hasan, M., Singh, D.K., Sahoo, R.N., and Yeasin, M.",
+    "year": "2025",
+    "title": "IoT and sensor-based hydroponics vertical farming management system",
+    "id_number": "ICAR-CS-IARI-Technology-2025-002"
+  },
+  {
+    "category": "Copyright",
+    "authors": "Sinha, D., Dasmandal, T., Yeasin, M., Mishra, D. C., Rai, A., & Archak, S.",
+    "year": "2024",
+    "title": "GB5MCPRED: 5MC Prediction Server",
+    "id_number": "SW-19587/2024"
+  },
+  {
+    "category": "Copyright",
+    "authors": "Ghosh, S., Angadi, U., Sinha, D., Yeasin, M., Iquebal, M. A., & Sarika.",
+    "year": "2025",
+    "title": "Motif Search: Motif Identification and Its Frequency Analysis",
+    "id_number": "SW-2025020630"
+  },
+  {
+    "category": "Copyright",
+    "authors": "Sinha, D., Dasmandal, T., Paul, K., Yeasin, M., Bhattacharjee, S., Murmu, S., Mishra, D. C., Pal, S., Rai, A., & Archak, S.",
+    "year": "2024",
+    "title": "Methsemble-6ma: 6ma Prediction Tool",
+    "id_number": "SW-19863/2024"
+  },
+  {
+    "category": "Copyright",
+    "authors": "Murmu, S., Sinha, D., Yeasin, M., Budhlakoti, N., Srivastava, S., Mishra, D. C., Archak, S., & Jha, G. K.",
+    "year": "2024",
+    "title": "Openhimr: Histone Modification Prediction Tool",
+    "id_number": "SW-19962/2024"
+  }
 ]

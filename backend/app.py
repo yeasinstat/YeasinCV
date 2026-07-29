@@ -23,6 +23,7 @@ import uuid
 from functools import wraps
 
 from flask import Flask, request, jsonify, g, send_from_directory
+from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 
 try:
@@ -38,6 +39,11 @@ FRONTEND_DIR = os.path.join(BASE_DIR, "..", "frontend")
 
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 CORS(app)
+
+
+@app.errorhandler(403)
+def handle_403(e):
+    return jsonify({"error": e.description or "Forbidden."}), 403
 
 
 @app.route("/")
@@ -107,6 +113,9 @@ CREATE TABLE IF NOT EXISTS scientists (
     photo_filename    TEXT DEFAULT 'yeasin-photo.png',
     scholar_url       TEXT DEFAULT '',
     linkedin_url      TEXT DEFAULT '',
+    login_email       TEXT DEFAULT '',
+    login_password_hash TEXT DEFAULT '',
+    current_work      TEXT DEFAULT '[]',
     created_at        TEXT DEFAULT (datetime('now'))
 );
 
@@ -229,6 +238,55 @@ CREATE TABLE IF NOT EXISTS technology (
     created_at   TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS popular_articles (
+    article_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER DEFAULT 1,
+    authors      TEXT,
+    year         TEXT,
+    title        TEXT,
+    publication  TEXT,
+    details      TEXT DEFAULT '',
+    hidden       INTEGER DEFAULT 0,
+    cv_included  INTEGER DEFAULT 1,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS policy_papers (
+    paper_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER DEFAULT 1,
+    authors      TEXT,
+    year         TEXT,
+    title        TEXT,
+    publisher    TEXT DEFAULT '',
+    id_number    TEXT DEFAULT '',
+    hidden       INTEGER DEFAULT 0,
+    cv_included  INTEGER DEFAULT 1,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS manuals (
+    manual_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER DEFAULT 1,
+    authors      TEXT,
+    year         TEXT,
+    title        TEXT,
+    publisher    TEXT DEFAULT '',
+    hidden       INTEGER DEFAULT 0,
+    cv_included  INTEGER DEFAULT 1,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS research_team (
+    member_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id  INTEGER DEFAULT 1,
+    sort_order    INTEGER DEFAULT 0,
+    name          TEXT,
+    designation   TEXT DEFAULT '',
+    photo_filename TEXT DEFAULT '',
+    hidden        INTEGER DEFAULT 0,
+    created_at    TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS journal_scores (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     journal_name   TEXT UNIQUE,
@@ -244,13 +302,17 @@ CREATE TABLE IF NOT EXISTS journal_scores (
 CREATE TABLE IF NOT EXISTS sessions (
     token   TEXT PRIMARY KEY,
     email   TEXT,
-    expires REAL
+    expires REAL,
+    role    TEXT DEFAULT 'super_admin',
+    scoped_scientist_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS otp_codes (
     email   TEXT PRIMARY KEY,
     otp     TEXT,
-    expires REAL
+    expires REAL,
+    role    TEXT DEFAULT 'super_admin',
+    scoped_scientist_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS profile_layout (
@@ -322,7 +384,8 @@ def migrate_db(conn):
 
     # cv_included on every simple-CRUD record table (awards, projects,
     # book_chapters, software, courses_taught, students_guided, technology)
-    for _tbl in ("awards", "projects", "book_chapters", "software", "courses_taught", "students_guided", "technology"):
+    for _tbl in ("awards", "projects", "book_chapters", "software", "courses_taught", "students_guided", "technology",
+                 "popular_articles", "policy_papers", "manuals"):
         _cols = {row[1] for row in conn.execute(f"PRAGMA table_info({_tbl})")}
         if "cv_included" not in _cols:
             conn.execute(f"ALTER TABLE {_tbl} ADD COLUMN cv_included INTEGER DEFAULT 1")
@@ -338,6 +401,41 @@ def migrate_db(conn):
         conn.execute("ALTER TABLE scientists ADD COLUMN scholar_url TEXT DEFAULT ''")
     if "linkedin_url" not in sci_cols:
         conn.execute("ALTER TABLE scientists ADD COLUMN linkedin_url TEXT DEFAULT ''")
+    if "login_email" not in sci_cols:
+        conn.execute("ALTER TABLE scientists ADD COLUMN login_email TEXT DEFAULT ''")
+    if "login_password_hash" not in sci_cols:
+        conn.execute("ALTER TABLE scientists ADD COLUMN login_password_hash TEXT DEFAULT ''")
+    if "current_work" not in sci_cols:
+        conn.execute("ALTER TABLE scientists ADD COLUMN current_work TEXT DEFAULT '[]'")
+    conn.commit()
+
+    # research_interest used to be a single paragraph of plain text; convert
+    # any row still in that old format into a one-item JSON array (a single
+    # bullet), so it now displays and edits the same way as Education/
+    # Accolades/etc instead of crashing the JSON parse on read.
+    for row in conn.execute("SELECT scientist_id, research_interest FROM scientists WHERE research_interest != ''"):
+        val = row["research_interest"]
+        try:
+            json.loads(val)
+        except (json.JSONDecodeError, TypeError):
+            conn.execute(
+                "UPDATE scientists SET research_interest = ? WHERE scientist_id = ?",
+                (json.dumps([val]), row["scientist_id"]),
+            )
+    conn.commit()
+
+    sess_cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    if "role" not in sess_cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN role TEXT DEFAULT 'super_admin'")
+    if "scoped_scientist_id" not in sess_cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN scoped_scientist_id INTEGER")
+    conn.commit()
+
+    otp_cols = {row[1] for row in conn.execute("PRAGMA table_info(otp_codes)")}
+    if "role" not in otp_cols:
+        conn.execute("ALTER TABLE otp_codes ADD COLUMN role TEXT DEFAULT 'super_admin'")
+    if "scoped_scientist_id" not in otp_cols:
+        conn.execute("ALTER TABLE otp_codes ADD COLUMN scoped_scientist_id INTEGER")
     conn.commit()
 
     js_cols = {row[1] for row in conn.execute("PRAGMA table_info(journal_scores)")}
@@ -407,14 +505,14 @@ def init_db(force_reseed=False):
                 """INSERT INTO scientists
                 (slug, name, designation, institute, address, dob, mobile, email,
                  research_interest, education, accolades, employment, other_records,
-                 photo_filename, scholar_url, linkedin_url)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 photo_filename, scholar_url, linkedin_url, current_work)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     s["slug"], s["name"], s["designation"], s["institute"], s["address"], s["dob"],
-                    json.dumps(s["mobile"]), json.dumps(s["email"]), s["research_interest"],
+                    json.dumps(s["mobile"]), json.dumps(s["email"]), json.dumps(s["research_interest"]),
                     json.dumps(s["education"]), json.dumps(s["accolades"]), json.dumps(s["employment"]),
                     json.dumps(s["other_records"]), s["photo_filename"],
-                    s.get("scholar_url", ""), s.get("linkedin_url", ""),
+                    s.get("scholar_url", ""), s.get("linkedin_url", ""), json.dumps(s.get("current_work", [])),
                 ),
             )
         conn.commit()
@@ -483,6 +581,9 @@ def init_db(force_reseed=False):
         "courses_taught": ["course_name"],
         "students_guided": ["name", "student_type", "start_date", "end_date", "description"],
         "technology": ["category", "authors", "year", "title", "id_number"],
+        "popular_articles": ["authors", "year", "title", "publication", "details"],
+        "policy_papers": ["authors", "year", "title", "publisher", "id_number"],
+        "manuals": ["authors", "year", "title", "publisher"],
     }
     for scientist_id, path_prefix in ((1, ""), (2, "ranjit_")):
         for table, cols in simple_seed_map.items():
@@ -715,11 +816,37 @@ def require_auth(f):
     def wrapper(*args, **kwargs):
         token = request.headers.get("Authorization", "").replace("Bearer ", "")
         db = get_db()
-        row = db.execute("SELECT expires FROM sessions WHERE token = ?", (token,)).fetchone()
+        row = db.execute("SELECT expires, role, scoped_scientist_id FROM sessions WHERE token = ?", (token,)).fetchone()
         if not row or row["expires"] < time.time():
             return jsonify({"error": "Unauthorized. Please log in again."}), 401
+        g.session_role = row["role"] or "super_admin"
+        g.session_scientist_id = row["scoped_scientist_id"]
         return f(*args, **kwargs)
     return wrapper
+
+
+def _enforce_scientist_scope(target_scientist_id):
+    """
+    Aborts with 403 if the logged-in session belongs to a single scientist
+    (not the super admin) and they're trying to touch someone else's data.
+    Call this from any @require_auth endpoint that acts on a specific
+    scientist_id. No-op for super_admin sessions and for unauthenticated
+    calls (require_auth already blocks those before this ever runs).
+    """
+    role = getattr(g, "session_role", "super_admin")
+    if role == "scientist" and getattr(g, "session_scientist_id", None) != target_scientist_id:
+        from flask import abort
+        abort(403, description="You can only manage your own profile.")
+
+
+def _require_super_admin():
+    """Aborts with 403 unless the logged-in session is the super admin — for
+    site-wide actions (Add User, NAAS/JCR upload, backups) that no single
+    scientist's login should be able to do."""
+    role = getattr(g, "session_role", "super_admin")
+    if role != "super_admin":
+        from flask import abort
+        abort(403, description="Only the site admin can do this.")
 
 
 def send_otp_email(email: str, otp: str):
@@ -794,16 +921,32 @@ def login():
     data = request.get_json(force=True)
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
+    login_type = data.get("login_type", "any")  # "admin", "user", or "any" (back-compat)
 
-    if email != ADMIN_EMAIL.lower() or password != ADMIN_PASSWORD:
+    role, scoped_scientist_id = None, None
+
+    if login_type in ("admin", "any"):
+        if email == ADMIN_EMAIL.lower() and password == ADMIN_PASSWORD:
+            role, scoped_scientist_id = "super_admin", None
+
+    if role is None and login_type in ("user", "any"):
+        db = get_db()
+        row = db.execute(
+            "SELECT scientist_id, login_password_hash FROM scientists WHERE lower(login_email) = ? AND login_email != ''",
+            (email,),
+        ).fetchone()
+        if row and row["login_password_hash"] and check_password_hash(row["login_password_hash"], password):
+            role, scoped_scientist_id = "scientist", row["scientist_id"]
+
+    if role is None:
         return jsonify({"error": "Invalid email or password"}), 401
 
     otp = generate_otp()
     db = get_db()
     db.execute(
-        "INSERT INTO otp_codes (email, otp, expires) VALUES (?,?,?) "
-        "ON CONFLICT(email) DO UPDATE SET otp=excluded.otp, expires=excluded.expires",
-        (email, otp, time.time() + OTP_TTL_SECONDS),
+        "INSERT INTO otp_codes (email, otp, expires, role, scoped_scientist_id) VALUES (?,?,?,?,?) "
+        "ON CONFLICT(email) DO UPDATE SET otp=excluded.otp, expires=excluded.expires, role=excluded.role, scoped_scientist_id=excluded.scoped_scientist_id",
+        (email, otp, time.time() + OTP_TTL_SECONDS, role, scoped_scientist_id),
     )
     db.commit()
     try:
@@ -827,20 +970,23 @@ def verify_otp():
     otp = (data.get("otp") or "").strip()
 
     db = get_db()
-    record = db.execute("SELECT otp, expires FROM otp_codes WHERE email = ?", (email,)).fetchone()
+    record = db.execute("SELECT otp, expires, role, scoped_scientist_id FROM otp_codes WHERE email = ?", (email,)).fetchone()
     if not record or record["expires"] < time.time():
         return jsonify({"error": "OTP expired. Please log in again."}), 400
     if record["otp"] != otp:
         return jsonify({"error": "Incorrect OTP."}), 400
 
+    role = record["role"] or "super_admin"
+    scoped_scientist_id = record["scoped_scientist_id"]
+
     db.execute("DELETE FROM otp_codes WHERE email = ?", (email,))
     token = generate_token()
     db.execute(
-        "INSERT INTO sessions (token, email, expires) VALUES (?,?,?)",
-        (token, email, time.time() + SESSION_TTL_SECONDS),
+        "INSERT INTO sessions (token, email, expires, role, scoped_scientist_id) VALUES (?,?,?,?,?)",
+        (token, email, time.time() + SESSION_TTL_SECONDS, role, scoped_scientist_id),
     )
     db.commit()
-    return jsonify({"token": token, "message": "Login successful."})
+    return jsonify({"token": token, "message": "Login successful.", "role": role, "scientist_id": scoped_scientist_id})
 
 
 def is_admin_request():
@@ -980,6 +1126,7 @@ def add_paper():
     data = request.get_json(force=True)
     db = get_db()
     scientist_id = _get_scientist_id()
+    _enforce_scientist_scope(scientist_id)
 
     if "bibtex" in data:
         if bibtexparser is None:
@@ -1050,6 +1197,10 @@ def add_paper():
 def update_paper(pub_id):
     data = request.get_json(force=True)
     db = get_db()
+    owner = db.execute("SELECT scientist_id FROM papers WHERE publication_id = ?", (pub_id,)).fetchone()
+    if not owner:
+        return jsonify({"error": "Paper not found."}), 404
+    _enforce_scientist_scope(owner["scientist_id"])
     fields = [
         "complete_reference", "title", "authors", "author_position", "year",
         "journal", "publisher", "issn", "doi", "article_type",
@@ -1087,9 +1238,10 @@ def update_paper(pub_id):
 @require_auth
 def toggle_paper_hidden(pub_id):
     db = get_db()
-    row = db.execute("SELECT hidden FROM papers WHERE publication_id = ?", (pub_id,)).fetchone()
+    row = db.execute("SELECT hidden, scientist_id FROM papers WHERE publication_id = ?", (pub_id,)).fetchone()
     if not row:
         return jsonify({"error": "Paper not found."}), 404
+    _enforce_scientist_scope(row["scientist_id"])
     new_val = 0 if row["hidden"] else 1
     db.execute("UPDATE papers SET hidden = ? WHERE publication_id = ?", (new_val, pub_id))
     db.commit()
@@ -1101,9 +1253,10 @@ def toggle_paper_hidden(pub_id):
 def toggle_paper_selected(pub_id):
     """Toggles whether a paper appears in the 'Selected' view. Every paper always stays in 'All' regardless."""
     db = get_db()
-    row = db.execute("SELECT selected FROM papers WHERE publication_id = ?", (pub_id,)).fetchone()
+    row = db.execute("SELECT selected, scientist_id FROM papers WHERE publication_id = ?", (pub_id,)).fetchone()
     if not row:
         return jsonify({"error": "Paper not found."}), 404
+    _enforce_scientist_scope(row["scientist_id"])
     new_val = 0 if row["selected"] else 1
     db.execute("UPDATE papers SET selected = ? WHERE publication_id = ?", (new_val, pub_id))
     db.commit()
@@ -1115,9 +1268,10 @@ def toggle_paper_selected(pub_id):
 def toggle_paper_cv_included(pub_id):
     """Toggles whether a paper is included in the downloadable CV."""
     db = get_db()
-    row = db.execute("SELECT cv_included FROM papers WHERE publication_id = ?", (pub_id,)).fetchone()
+    row = db.execute("SELECT cv_included, scientist_id FROM papers WHERE publication_id = ?", (pub_id,)).fetchone()
     if not row:
         return jsonify({"error": "Paper not found."}), 404
+    _enforce_scientist_scope(row["scientist_id"])
     new_val = 0 if row["cv_included"] else 1
     db.execute("UPDATE papers SET cv_included = ? WHERE publication_id = ?", (new_val, pub_id))
     db.commit()
@@ -1129,9 +1283,10 @@ def toggle_paper_cv_included(pub_id):
 def enrich_paper(pub_id):
     """Fetches abstract + subject keywords from Crossref for one paper (by its DOI) and reclassifies its domain."""
     db = get_db()
-    row = db.execute("SELECT title, doi FROM papers WHERE publication_id = ?", (pub_id,)).fetchone()
+    row = db.execute("SELECT title, doi, scientist_id FROM papers WHERE publication_id = ?", (pub_id,)).fetchone()
     if not row:
         return jsonify({"error": "Paper not found."}), 404
+    _enforce_scientist_scope(row["scientist_id"])
     if not row["doi"]:
         return jsonify({"error": "This paper has no DOI to look up."}), 400
 
@@ -1164,13 +1319,16 @@ def enrich_all_papers():
     """
     data = request.get_json(silent=True) or {}
     force = bool(data.get("force", False))
+    scientist_id = _get_scientist_id()
+    _enforce_scientist_scope(scientist_id)
     db = get_db()
 
     if force:
-        rows = db.execute("SELECT publication_id, title, doi FROM papers WHERE doi != ''").fetchall()
+        rows = db.execute("SELECT publication_id, title, doi FROM papers WHERE scientist_id = ? AND doi != ''", (scientist_id,)).fetchall()
     else:
         rows = db.execute(
-            "SELECT publication_id, title, doi FROM papers WHERE doi != '' AND (abstract IS NULL OR abstract = '')"
+            "SELECT publication_id, title, doi FROM papers WHERE scientist_id = ? AND doi != '' AND (abstract IS NULL OR abstract = '')",
+            (scientist_id,)
         ).fetchall()
 
     updated, skipped = 0, 0
@@ -1203,6 +1361,10 @@ def enrich_all_papers():
 @require_auth
 def delete_paper(pub_id):
     db = get_db()
+    owner = db.execute("SELECT scientist_id FROM papers WHERE publication_id = ?", (pub_id,)).fetchone()
+    if not owner:
+        return jsonify({"error": "Paper not found."}), 404
+    _enforce_scientist_scope(owner["scientist_id"])
     db.execute("DELETE FROM papers WHERE publication_id = ?", (pub_id,))
     db.commit()
     return jsonify({"message": "Paper deleted."})
@@ -1221,9 +1383,16 @@ def _get_scientist_id():
 
 @app.route("/api/scientists", methods=["GET"])
 def list_scientists():
-    """Lightweight list for the profile switcher — id, slug, name, designation, photo."""
+    """Lightweight list for the profile switcher — id, slug, name, designation, photo.
+    Super admins also get each profile's assigned login_email, so they can see
+    who has a login set up without needing to open each one."""
     db = get_db()
-    rows = db.execute("SELECT scientist_id, slug, name, designation, photo_filename FROM scientists ORDER BY scientist_id ASC").fetchall()
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    session_row = db.execute("SELECT expires, role FROM sessions WHERE token = ?", (token,)).fetchone()
+    is_super_admin = bool(session_row and session_row["expires"] >= time.time() and (session_row["role"] or "super_admin") == "super_admin")
+
+    cols = "scientist_id, slug, name, designation, photo_filename" + (", login_email" if is_super_admin else "")
+    rows = db.execute(f"SELECT {cols} FROM scientists ORDER BY scientist_id ASC").fetchall()
     return jsonify([dict(r) for r in rows])
 
 
@@ -1235,8 +1404,13 @@ def scientist_info():
     if not row:
         return jsonify({"error": "Scientist not found."}), 404
     d = dict(row)
-    for key in ("mobile", "email", "education", "accolades", "employment", "other_records"):
+    for key in ("mobile", "email", "education", "accolades", "employment", "other_records", "current_work"):
         d[key] = json.loads(d[key]) if d[key] else []
+    try:
+        d["research_interest"] = json.loads(d["research_interest"]) if d["research_interest"] else []
+    except (json.JSONDecodeError, TypeError):
+        # Old plain-text format (pre-bullet-list) — wrap as a single item.
+        d["research_interest"] = [d["research_interest"]] if d["research_interest"] else []
     return jsonify(d)
 
 
@@ -1245,6 +1419,7 @@ def scientist_info():
 def update_scientist():
     """Updates any subset of the active scientist's profile fields (Home tab content)."""
     scientist_id = _get_scientist_id()
+    _enforce_scientist_scope(scientist_id)
     data = request.get_json(force=True)
     db = get_db()
 
@@ -1252,8 +1427,8 @@ def update_scientist():
     if not row:
         return jsonify({"error": "Scientist not found."}), 404
 
-    text_fields = ["name", "designation", "institute", "address", "dob", "research_interest", "scholar_url", "linkedin_url"]
-    json_fields = ["mobile", "email", "education", "accolades", "employment", "other_records"]
+    text_fields = ["name", "designation", "institute", "address", "dob", "scholar_url", "linkedin_url"]
+    json_fields = ["mobile", "email", "education", "accolades", "employment", "other_records", "research_interest", "current_work"]
 
     updates, params = [], []
     for f in text_fields:
@@ -1278,7 +1453,9 @@ def update_scientist():
 @require_auth
 def add_scientist():
     """Creates a brand-new, entirely blank profile — no papers, awards, or any
-    other content — for a new person to fill in themselves via admin login."""
+    other content — for a new person to fill in themselves via admin login.
+    Only the site admin can do this, not an individual scientist's own login."""
+    _require_super_admin()
     data = request.get_json(force=True)
     name = (data.get("name") or "").strip()
     if not name:
@@ -1296,16 +1473,100 @@ def add_scientist():
         """INSERT INTO scientists
         (slug, name, designation, institute, address, dob, mobile, email,
          research_interest, education, accolades, employment, other_records,
-         photo_filename, scholar_url, linkedin_url)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+         photo_filename, scholar_url, linkedin_url, current_work)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             slug, name, data.get("designation", ""), data.get("institute", ""), "", "",
-            "[]", "[]", "", "[]", "[]", "[]", "[]",
-            "yeasin-photo.png", "", "",
+            "[]", "[]", "[]", "[]", "[]", "[]", "[]",
+            "yeasin-photo.png", "", "", "[]",
         ),
     )
     db.commit()
     return jsonify({"message": f"{name}'s profile created — blank and ready to fill in.", "scientist_id": cur.lastrowid}), 201
+
+
+@app.route("/api/scientists/<int:target_id>", methods=["DELETE"])
+@require_auth
+def delete_scientist(target_id):
+    """
+    Super-admin only: permanently deletes a profile and everything in it —
+    papers, awards, projects, book chapters, software, courses taught,
+    students guided, technology, its layout settings, and its own login if
+    it has one. This cannot be undone.
+    """
+    _require_super_admin()
+    db = get_db()
+
+    row = db.execute("SELECT name FROM scientists WHERE scientist_id = ?", (target_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "Profile not found."}), 404
+
+    total_count = db.execute("SELECT COUNT(*) FROM scientists").fetchone()[0]
+    if total_count <= 1:
+        return jsonify({"error": "Can't delete the only remaining profile."}), 400
+
+    for table in ("papers", "awards", "projects", "book_chapters", "software",
+                  "courses_taught", "students_guided", "technology"):
+        db.execute(f"DELETE FROM {table} WHERE scientist_id = ?", (target_id,))
+    db.execute("DELETE FROM profile_layout WHERE scientist_id = ?", (target_id,))
+    db.execute("DELETE FROM scientists WHERE scientist_id = ?", (target_id,))
+    db.commit()
+    return jsonify({"message": f"{row['name']}'s profile and all its content have been deleted."})
+
+
+@app.route("/api/scientist/login", methods=["PUT"])
+@require_auth
+def set_scientist_login():
+    """
+    Super-admin only: sets or resets the login email/password for one
+    scientist's profile, so that person can log in and manage only their
+    own content. Passwords are stored hashed — if a user forgets theirs,
+    the admin sets a new one here rather than the system revealing the old
+    one, which would mean storing it in a reversible, less safe form.
+    """
+    _require_super_admin()
+    scientist_id = _get_scientist_id()
+    data = request.get_json(force=True)
+    login_email = (data.get("login_email") or "").strip().lower()
+    password = data.get("password") or ""
+
+    if not login_email or not password:
+        return jsonify({"error": "Both a login email and password are required."}), 400
+    if len(password) < 6:
+        return jsonify({"error": "Password should be at least 6 characters."}), 400
+    if login_email == ADMIN_EMAIL.lower():
+        return jsonify({"error": "That email is already used for the site admin login — pick a different one."}), 400
+
+    db = get_db()
+    row = db.execute("SELECT scientist_id FROM scientists WHERE scientist_id = ?", (scientist_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "Scientist not found."}), 404
+
+    clash = db.execute(
+        "SELECT scientist_id FROM scientists WHERE lower(login_email) = ? AND login_email != '' AND scientist_id != ?",
+        (login_email, scientist_id),
+    ).fetchone()
+    if clash:
+        return jsonify({"error": "That email is already assigned to another profile's login."}), 400
+
+    db.execute(
+        "UPDATE scientists SET login_email = ?, login_password_hash = ? WHERE scientist_id = ?",
+        (login_email, generate_password_hash(password), scientist_id),
+    )
+    db.commit()
+    return jsonify({"message": "Login credentials saved."})
+
+
+@app.route("/api/scientist/login", methods=["DELETE"])
+@require_auth
+def remove_scientist_login():
+    """Super-admin only: removes a scientist's own login, leaving only the site admin able to manage that profile."""
+    _require_super_admin()
+    scientist_id = _get_scientist_id()
+    db = get_db()
+    db.execute("UPDATE scientists SET login_email = '', login_password_hash = '' WHERE scientist_id = ?", (scientist_id,))
+    db.commit()
+    return jsonify({"message": "Login removed."})
 
 
 @app.route("/api/scientist/photo", methods=["POST"])
@@ -1313,6 +1574,7 @@ def add_scientist():
 def upload_scientist_photo():
     """Accepts an image upload for the active scientist's profile photo."""
     scientist_id = _get_scientist_id()
+    _enforce_scientist_scope(scientist_id)
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded (expected form field 'file')."}), 400
     file = request.files["file"]
@@ -1326,6 +1588,132 @@ def upload_scientist_photo():
 
     db = get_db()
     db.execute("UPDATE scientists SET photo_filename = ? WHERE scientist_id = ?", (filename, scientist_id))
+    db.commit()
+    return jsonify({"message": "Photo updated.", "photo_filename": filename})
+
+
+# ---------------------------------------------------------------------------
+# Research Team — a per-scientist list of team members (photo + name +
+# designation), shown on the Home tab. Bespoke rather than the generic
+# simple-CRUD system because it needs photo upload and drag-to-reorder.
+# ---------------------------------------------------------------------------
+
+@app.route("/api/research-team", methods=["GET"])
+def list_research_team():
+    scientist_id = _get_scientist_id()
+    db = get_db()
+    hidden_clause = "" if is_admin_request() else "AND hidden = 0"
+    rows = db.execute(
+        f"SELECT * FROM research_team WHERE scientist_id = ? {hidden_clause} ORDER BY sort_order ASC, member_id ASC",
+        (scientist_id,),
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/research-team", methods=["POST"])
+@require_auth
+def add_research_team_member():
+    scientist_id = _get_scientist_id()
+    _enforce_scientist_scope(scientist_id)
+    data = request.get_json(force=True)
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Name is required."}), 400
+    db = get_db()
+    max_order = db.execute("SELECT COALESCE(MAX(sort_order), -1) FROM research_team WHERE scientist_id = ?", (scientist_id,)).fetchone()[0]
+    cur = db.execute(
+        "INSERT INTO research_team (scientist_id, sort_order, name, designation) VALUES (?,?,?,?)",
+        (scientist_id, max_order + 1, name, data.get("designation", "")),
+    )
+    db.commit()
+    return jsonify({"message": "Team member added.", "id": cur.lastrowid}), 201
+
+
+@app.route("/api/research-team/<int:member_id>", methods=["PUT"])
+@require_auth
+def update_research_team_member(member_id):
+    db = get_db()
+    owner = db.execute("SELECT scientist_id FROM research_team WHERE member_id = ?", (member_id,)).fetchone()
+    if not owner:
+        return jsonify({"error": "Not found."}), 404
+    _enforce_scientist_scope(owner["scientist_id"])
+    data = request.get_json(force=True)
+    updates, params = [], []
+    for f in ("name", "designation"):
+        if f in data:
+            updates.append(f"{f} = ?")
+            params.append(data[f])
+    if not updates:
+        return jsonify({"error": "No fields to update."}), 400
+    params.append(member_id)
+    db.execute(f"UPDATE research_team SET {', '.join(updates)} WHERE member_id = ?", params)
+    db.commit()
+    return jsonify({"message": "Updated."})
+
+
+@app.route("/api/research-team/<int:member_id>", methods=["DELETE"])
+@require_auth
+def delete_research_team_member(member_id):
+    db = get_db()
+    owner = db.execute("SELECT scientist_id FROM research_team WHERE member_id = ?", (member_id,)).fetchone()
+    if not owner:
+        return jsonify({"error": "Not found."}), 404
+    _enforce_scientist_scope(owner["scientist_id"])
+    db.execute("DELETE FROM research_team WHERE member_id = ?", (member_id,))
+    db.commit()
+    return jsonify({"message": "Removed."})
+
+
+@app.route("/api/research-team/<int:member_id>/toggle-hidden", methods=["POST"])
+@require_auth
+def toggle_research_team_hidden(member_id):
+    db = get_db()
+    row = db.execute("SELECT hidden, scientist_id FROM research_team WHERE member_id = ?", (member_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "Not found."}), 404
+    _enforce_scientist_scope(row["scientist_id"])
+    new_val = 0 if row["hidden"] else 1
+    db.execute("UPDATE research_team SET hidden = ? WHERE member_id = ?", (new_val, member_id))
+    db.commit()
+    return jsonify({"message": "Hidden." if new_val else "Visible again.", "hidden": bool(new_val)})
+
+
+@app.route("/api/research-team/reorder", methods=["PUT"])
+@require_auth
+def reorder_research_team():
+    """Body: {"order": [member_id, member_id, ...]} in the new display order."""
+    scientist_id = _get_scientist_id()
+    _enforce_scientist_scope(scientist_id)
+    data = request.get_json(force=True)
+    order = data.get("order", [])
+    db = get_db()
+    for idx, member_id in enumerate(order):
+        db.execute(
+            "UPDATE research_team SET sort_order = ? WHERE member_id = ? AND scientist_id = ?",
+            (idx, member_id, scientist_id),
+        )
+    db.commit()
+    return jsonify({"message": "Order saved."})
+
+
+@app.route("/api/research-team/<int:member_id>/photo", methods=["POST"])
+@require_auth
+def upload_research_team_photo(member_id):
+    db = get_db()
+    owner = db.execute("SELECT scientist_id FROM research_team WHERE member_id = ?", (member_id,)).fetchone()
+    if not owner:
+        return jsonify({"error": "Not found."}), 404
+    _enforce_scientist_scope(owner["scientist_id"])
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded (expected form field 'file')."}), 400
+    file = request.files["file"]
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        return jsonify({"error": "Please upload a PNG, JPG, or WEBP image."}), 400
+
+    filename = f"team-{member_id}-photo{ext}"
+    file.save(os.path.join(FRONTEND_DIR, filename))
+    db.execute("UPDATE research_team SET photo_filename = ? WHERE member_id = ?", (filename, member_id))
     db.commit()
     return jsonify({"message": "Photo updated.", "photo_filename": filename})
 
@@ -1344,6 +1732,7 @@ def get_profile_layout():
 @require_auth
 def save_profile_layout():
     scientist_id = _get_scientist_id()
+    _enforce_scientist_scope(scientist_id)
     data = request.get_json(force=True)
     data.pop("scientist_id", None)
     db = get_db()
@@ -1367,13 +1756,11 @@ SCIENTISTS_SEED = [
         "dob": "27th January 1994",
         "mobile": ["8926261427", "9136309898"],
         "email": ["yeasin.iasri@gmail.com", "mdyeasin.iasri@icar.org.in"],
-        "research_interest": (
-            "I am a statistician, specialize in time series and machine learning "
-            "models for agriculture and allied sciences. My current research "
-            "focuses on modelling and forecasting temporal behaviour of the "
-            "environmental parameters and quantifying its effect on agricultural "
-            "productivity and sustainability."
-        ),
+        "research_interest": [
+            "Time series and machine learning models for agriculture and allied sciences",
+            "Modelling and forecasting temporal behaviour of environmental parameters",
+            "Quantifying the effect of environmental change on agricultural productivity and sustainability",
+        ],
         "education": [
             {"degree": "Ph.D. in Agricultural Statistics", "year": "2021", "institution": "ICAR-Indian Agricultural Research Institute"},
             {"degree": "M.Sc. in Agricultural Statistics", "year": "2017", "institution": "ICAR-Indian Agricultural Research Institute"},
@@ -1410,12 +1797,11 @@ SCIENTISTS_SEED = [
         "dob": "25th April 1982",
         "mobile": ["+91-8287778896"],
         "email": ["ranjitstat@gmail.com", "ranjit.paul@icar.gov.in"],
-        "research_interest": (
-            "I work on time series analysis and forecasting for agriculture, with "
-            "particular focus on nonlinear models (GARCH/EGARCH), wavelet-based and "
-            "hybrid machine learning methods, and their application to agricultural "
-            "price and yield forecasting, market integration, and climate variability."
-        ),
+        "research_interest": [
+            "Time series analysis and forecasting for agriculture",
+            "Nonlinear models (GARCH/EGARCH), wavelet-based and hybrid machine learning methods",
+            "Agricultural price and yield forecasting, market integration, and climate variability",
+        ],
         "education": [
             {"degree": "Ph.D. in Agricultural Statistics", "year": "2009", "institution": "Indian Agricultural Statistics Research Institute (IASRI)"},
             {"degree": "M.Sc. in Agricultural Statistics", "year": "2006", "institution": "Indian Agricultural Statistics Research Institute (IASRI)"},
@@ -1528,8 +1914,10 @@ def _fetch_cran_downloads(package_name: str):
 @require_auth
 def update_software_downloads():
     """Refreshes the Downloads count for every software package from CRAN's live download logs."""
+    scientist_id = _get_scientist_id()
+    _enforce_scientist_scope(scientist_id)
     db = get_db()
-    rows = db.execute("SELECT software_id, package_name FROM software WHERE package_name != ''").fetchall()
+    rows = db.execute("SELECT software_id, package_name FROM software WHERE scientist_id = ? AND package_name != ''", (scientist_id,)).fetchall()
     updated, failed = 0, 0
     for r in rows:
         count = _fetch_cran_downloads(r["package_name"])
@@ -1587,6 +1975,24 @@ SIMPLE_TABLES = {
         "columns": ["category", "authors", "year", "title", "id_number"],
         "order_by": "tech_id ASC",
     },
+    "popular-articles": {
+        "table": "popular_articles",
+        "id_col": "article_id",
+        "columns": ["authors", "year", "title", "publication", "details"],
+        "order_by": "article_id ASC",
+    },
+    "policy-papers": {
+        "table": "policy_papers",
+        "id_col": "paper_id",
+        "columns": ["authors", "year", "title", "publisher", "id_number"],
+        "order_by": "paper_id ASC",
+    },
+    "manuals": {
+        "table": "manuals",
+        "id_col": "manual_id",
+        "columns": ["authors", "year", "title", "publisher"],
+        "order_by": "manual_id ASC",
+    },
 }
 
 
@@ -1607,6 +2013,7 @@ def _register_simple_crud(endpoint_name, config):
         data = request.get_json(force=True)
         db = get_db()
         scientist_id = _get_scientist_id()
+        _enforce_scientist_scope(scientist_id)
         if table == "software" and data.get("cran_url") and not data.get("package_name"):
             meta = _fetch_cran_metadata(data["cran_url"])
             if meta:
@@ -1623,6 +2030,10 @@ def _register_simple_crud(endpoint_name, config):
     def update_item(item_id):
         data = request.get_json(force=True)
         db = get_db()
+        owner = db.execute(f"SELECT scientist_id FROM {table} WHERE {id_col} = ?", (item_id,)).fetchone()
+        if not owner:
+            return jsonify({"error": "Not found."}), 404
+        _enforce_scientist_scope(owner["scientist_id"])
         if table == "software" and data.get("cran_url") and not data.get("package_name"):
             meta = _fetch_cran_metadata(data["cran_url"])
             if meta:
@@ -1643,15 +2054,20 @@ def _register_simple_crud(endpoint_name, config):
 
     def delete_item(item_id):
         db = get_db()
+        owner = db.execute(f"SELECT scientist_id FROM {table} WHERE {id_col} = ?", (item_id,)).fetchone()
+        if not owner:
+            return jsonify({"error": "Not found."}), 404
+        _enforce_scientist_scope(owner["scientist_id"])
         db.execute(f"DELETE FROM {table} WHERE {id_col} = ?", (item_id,))
         db.commit()
         return jsonify({"message": "Deleted."})
 
     def toggle_hidden(item_id):
         db = get_db()
-        row = db.execute(f"SELECT hidden FROM {table} WHERE {id_col} = ?", (item_id,)).fetchone()
+        row = db.execute(f"SELECT hidden, scientist_id FROM {table} WHERE {id_col} = ?", (item_id,)).fetchone()
         if not row:
             return jsonify({"error": "Not found."}), 404
+        _enforce_scientist_scope(row["scientist_id"])
         new_val = 0 if row["hidden"] else 1
         db.execute(f"UPDATE {table} SET hidden = ? WHERE {id_col} = ?", (new_val, item_id))
         db.commit()
@@ -1659,9 +2075,10 @@ def _register_simple_crud(endpoint_name, config):
 
     def toggle_cv_included(item_id):
         db = get_db()
-        row = db.execute(f"SELECT cv_included FROM {table} WHERE {id_col} = ?", (item_id,)).fetchone()
+        row = db.execute(f"SELECT cv_included, scientist_id FROM {table} WHERE {id_col} = ?", (item_id,)).fetchone()
         if not row:
             return jsonify({"error": "Not found."}), 404
+        _enforce_scientist_scope(row["scientist_id"])
         new_val = 0 if row["cv_included"] else 1
         db.execute(f"UPDATE {table} SET cv_included = ? WHERE {id_col} = ?", (new_val, item_id))
         db.commit()
@@ -1866,6 +2283,7 @@ def _upsert_journal_score(db, journal_name, issn="", jid="", impact_factor="", n
 @require_auth
 def upload_naas_scores():
     """Accepts the official NAAS 'Score of Science Journals' PDF and loads it into journal_scores."""
+    _require_super_admin()
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded (expected form field 'file')."}), 400
     file = request.files["file"]
@@ -1905,6 +2323,7 @@ def upload_jcr_scores():
     """
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded (expected form field 'file')."}), 400
+    _require_super_admin()
     file = request.files["file"]
 
     import tempfile
@@ -2038,6 +2457,7 @@ def export_database_backup():
     complete alternative to the journal-scores-only snapshot.
     """
     db = get_db()
+    _require_super_admin()
     # Merge the WAL file into the main database file so the exported copy
     # is complete and self-contained — without this, recent writes could
     # still be sitting only in research.db-wal and get left out.
@@ -2064,6 +2484,7 @@ def export_journal_scores_snapshot():
     you upload updated NAAS/JCR files (e.g. once a year).
     """
     db = get_db()
+    _require_super_admin()
     scores = db.execute("SELECT journal_name, issn, jid, impact_factor, naas_score, quartile FROM journal_scores").fetchall()
     papers = db.execute(
         "SELECT title, impact_factor, quartile, naas_score, issn FROM papers "
@@ -2146,6 +2567,7 @@ def reset_journal_scores():
     of values from different runs instead of one clean, trustworthy set.
     """
     db = get_db()
+    _require_super_admin()
 
     with open(SEED_PATH, encoding="utf-8") as f:
         seed_records = json.load(f)
@@ -2187,6 +2609,23 @@ def _build_cv_pdf(scientist_id=1):
         SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, HRFlowable
     )
     import io
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    # Some content (Popular Articles, Manuals) may be in Hindi/Devanagari
+    # script. ReportLab's built-in fonts (Times/Helvetica) have no glyphs for
+    # this — without a Unicode font registered, that text silently renders as
+    # garbled placeholder characters instead of failing loudly, so this is
+    # easy to miss. Noto Sans Devanagari also covers Latin script, so it's
+    # safe to use for any section that might mix English and Hindi entries.
+    _unicode_font_path = os.path.join(BASE_DIR, "NotoSansDevanagari.ttf")
+    _unicode_font_name = "Helvetica"  # fallback if the font file is missing
+    if os.path.exists(_unicode_font_path):
+        try:
+            pdfmetrics.registerFont(TTFont("NotoDevanagari", _unicode_font_path))
+            _unicode_font_name = "NotoDevanagari"
+        except Exception:
+            pass
 
     def esc(s):
         """Escapes text for ReportLab's Paragraph markup parser — without this,
@@ -2208,6 +2647,7 @@ def _build_cv_pdf(scientist_id=1):
     body_style = ParagraphStyle("body", fontName="Helvetica", fontSize=9.5, textColor=colors.HexColor("#1C2B39"), leading=13.5)
     meta_style = ParagraphStyle("meta", fontName="Helvetica-Oblique", fontSize=8.5, textColor=slate, leading=12, spaceAfter=8)
     entry_title_style = ParagraphStyle("entry_title", fontName="Helvetica-Bold", fontSize=9.5, textColor=ink, leading=13, spaceBefore=6)
+    unicode_body_style = ParagraphStyle("unicode_body", fontName=_unicode_font_name, fontSize=9.5, textColor=colors.HexColor("#1C2B39"), leading=15)
 
     db = get_db()
 
@@ -2215,8 +2655,12 @@ def _build_cv_pdf(scientist_id=1):
     if not sci_row:
         raise ValueError(f"No scientist with id {scientist_id}")
     p = dict(sci_row)
-    for key in ("mobile", "email", "education", "accolades", "employment", "other_records"):
+    for key in ("mobile", "email", "education", "accolades", "employment", "other_records", "current_work"):
         p[key] = json.loads(p[key]) if p[key] else []
+    try:
+        p["research_interest"] = json.loads(p["research_interest"]) if p["research_interest"] else []
+    except (json.JSONDecodeError, TypeError):
+        p["research_interest"] = [p["research_interest"]] if p["research_interest"] else []
 
     # ---- Read the saved Home-tab tick state (profile_layout.config) ----
     layout_row = db.execute("SELECT config FROM profile_layout WHERE scientist_id = ?", (scientist_id,)).fetchone()
@@ -2281,11 +2725,7 @@ def _build_cv_pdf(scientist_id=1):
             story.append(Paragraph(" &nbsp;|&nbsp; ".join(contact_bits), small_style))
             story.append(Spacer(1, 6))
 
-    # ---- Research interest block ----
-    if block_included("research_interest") and p.get("research_interest"):
-        story.append(Paragraph("Research Interest", h2_style))
-        story.append(Paragraph(esc(p["research_interest"]), body_style))
-
+    # ---- Research interest, education, accolades, employment, other records (all bulleted, per-item ticks) ----
     # ---- Education / Accolades / Employment / Other Records (per-item ticks) ----
     def list_block(block_id, title, data_items, render_fn):
         if not block_included(block_id) or not data_items:
@@ -2297,6 +2737,10 @@ def _build_cv_pdf(scientist_id=1):
         for i, item in included:
             story.append(Paragraph(render_fn(item), body_style))
 
+    list_block("research_interest", "Research Interest", p.get("research_interest", []),
+               lambda r: esc(r))
+    list_block("current_work", "Current Work", p.get("current_work", []),
+               lambda r: esc(r))
     list_block("education", "Education", p.get("education", []),
                lambda e: f"<b>{esc(e['degree'])}</b> ({esc(e['year'])}) &middot; {esc(e['institution'])}")
     list_block("accolades", "Academic Accolades", p.get("accolades", []),
@@ -2381,9 +2825,41 @@ def _build_cv_pdf(scientist_id=1):
     # ---- Technology / Patents ----
     rows = db.execute("SELECT * FROM technology WHERE scientist_id = ? AND cv_included = 1 ORDER BY tech_id ASC", (scientist_id,)).fetchall()
     if rows:
-        section_header(f"Technology / Patents ({len(rows)})")
+        section_header(f"Technology / Patents / Copyright ({len(rows)})")
         for r in rows:
             story.append(Paragraph(f"{esc(r['authors'])} ({esc(r['year'])}). {esc(r['title'])}. [{esc(r['category'])} No. {esc(r['id_number'])}]", body_style))
+
+    # ---- Popular Articles ----
+    rows = db.execute("SELECT * FROM popular_articles WHERE scientist_id = ? AND cv_included = 1 ORDER BY article_id ASC", (scientist_id,)).fetchall()
+    if rows:
+        section_header(f"Popular Articles ({len(rows)})")
+        for r in rows:
+            bits = f"{esc(r['authors'])} ({esc(r['year'])}). {esc(r['title'])}. {esc(r['publication'])}"
+            if r["details"]:
+                bits += f", {esc(r['details'])}"
+            story.append(Paragraph(bits, unicode_body_style))
+
+    # ---- Policy Papers ----
+    rows = db.execute("SELECT * FROM policy_papers WHERE scientist_id = ? AND cv_included = 1 ORDER BY paper_id ASC", (scientist_id,)).fetchall()
+    if rows:
+        section_header(f"Policy Papers ({len(rows)})")
+        for r in rows:
+            bits = f"{esc(r['authors'])} ({esc(r['year'])}). {esc(r['title'])}."
+            if r["publisher"]:
+                bits += f" {esc(r['publisher'])}."
+            if r["id_number"]:
+                bits += f" [{esc(r['id_number'])}]"
+            story.append(Paragraph(bits, body_style))
+
+    # ---- Manuals ----
+    rows = db.execute("SELECT * FROM manuals WHERE scientist_id = ? AND cv_included = 1 ORDER BY manual_id ASC", (scientist_id,)).fetchall()
+    if rows:
+        section_header(f"Manuals ({len(rows)})")
+        for r in rows:
+            bits = f"{esc(r['authors'])} ({esc(r['year'])}). {esc(r['title'])}."
+            if r["publisher"]:
+                bits += f" {esc(r['publisher'])}."
+            story.append(Paragraph(bits, unicode_body_style))
 
     doc.build(story)
     buf.seek(0)

@@ -19,6 +19,8 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   <div class="scientist-card" id="scientistCard">
     <select id="scientistSwitcher" class="scientist-switcher" title="Switch scientist profile" aria-label="Switch scientist profile"></select>
     <button class="btn-ghost hidden" id="addUserBtn">+ Add User</button>
+    <button class="btn-ghost hidden" id="manageLoginBtn">Manage Login</button>
+    <button class="btn-ghost hidden" id="deleteUserBtn">Delete User</button>
     <div class="scientist-text">
       <div class="scientist-name">Dr. Md Yeasin</div>
       <div class="scientist-role">Scientist &middot; ICAR-IASRI, New Delhi</div>
@@ -29,7 +31,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
     <button class="btn-ghost hidden" id="resetScoresBtn">Reset Journal Scores</button>
     <button class="btn-ghost hidden" id="uploadNaasBtn">Upload NAAS Scores</button>
     <button class="btn-ghost hidden" id="uploadJcrBtn">Upload JCR Impact Factors</button>
-    <button class="btn-ghost hidden" id="enrichAllBtn">Enrich All (Crossref)</button>
+    <button class="btn-ghost" id="userLoginBtn">User Login</button>
     <button class="btn-ghost" id="adminBtn">Admin</button>
   </div>
 </header>
@@ -37,10 +39,11 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
 <!-- Navigation tabs -->
 <nav class="section-nav" id="sectionNav">
   <button class="nav-tab active" data-section="home">Home</button>
+  <button class="nav-tab" data-section="personal-details">Personal Details</button>
   <button class="nav-tab" data-section="publications">Research Paper</button>
   <button class="nav-tab" data-section="awards">Awards</button>
   <button class="nav-tab" data-section="projects">Projects</button>
-  <button class="nav-tab" data-section="book-chapters">Book Chapters</button>
+  <button class="nav-tab" data-section="book-chapters">Other Publications</button>
   <button class="nav-tab" data-section="software">Software / Packages</button>
   <button class="nav-tab" data-section="courses-taught">Courses Taught</button>
   <button class="nav-tab" data-section="students-guided">Students Guided</button>
@@ -56,6 +59,13 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
     </div>
   </section>
 
+  <!-- ============ PERSONAL DETAILS ============ -->
+  <section class="section-panel hidden" id="section-personal-details">
+    <div class="profile-blocks" id="personalDetailsBlocks">
+      <!-- Education / Accolades / Employment / Other Records rendered dynamically -->
+    </div>
+  </section>
+
   <!-- ============ RESEARCH PAPER ============ -->
   <section class="section-panel hidden" id="section-publications">
     <section class="hero">
@@ -64,7 +74,10 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
           <h2>Research Paper Records</h2>
           <label class="section-header-tick hidden" data-select-all="publications"><input type="checkbox"> Include all in CV</label>
         </div>
-        <button class="btn-ghost hidden" id="addPublicationBtn">+ Add Publication</button>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-ghost hidden" id="enrichAllBtn">Enrich All (Crossref)</button>
+          <button class="btn-ghost hidden" id="addPublicationBtn">+ Add Publication</button>
+        </div>
       </div>
       <p class="hero-sub">Peer-reviewed journal articles, indexed by year, journal, quartile and research domain.</p>
       <div class="stat-row" id="statRow"></div>
@@ -157,12 +170,48 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   <section class="section-panel hidden" id="section-book-chapters">
     <div class="section-header">
       <div class="section-heading-group">
-        <h2>Book Chapters</h2>
-        <label class="section-header-tick hidden" data-select-all="book-chapters"><input type="checkbox"> Include all in CV</label>
+        <h2>Other Publications</h2>
       </div>
-      <button class="btn-ghost hidden add-record-btn" data-type="book-chapters">+ Add Book Chapter</button>
     </div>
-    <div class="record-list" id="bookChaptersList"></div>
+
+    <div class="pub-subtabs" id="otherPubSubtabs">
+      <button class="pub-subtab active" data-other-pub="book-chapters">Book Chapters</button>
+      <button class="pub-subtab" data-other-pub="popular-articles">Popular Articles</button>
+      <button class="pub-subtab" data-other-pub="policy-papers">Policy Paper</button>
+      <button class="pub-subtab" data-other-pub="manuals">Manual</button>
+    </div>
+
+    <div class="other-pub-panel" data-other-pub-panel="book-chapters">
+      <div class="section-header">
+        <label class="section-header-tick hidden" data-select-all="book-chapters"><input type="checkbox"> Include all in CV</label>
+        <button class="btn-ghost hidden add-record-btn" data-type="book-chapters">+ Add Book Chapter</button>
+      </div>
+      <div class="record-list" id="bookChaptersList"></div>
+    </div>
+
+    <div class="other-pub-panel hidden" data-other-pub-panel="popular-articles">
+      <div class="section-header">
+        <label class="section-header-tick hidden" data-select-all="popular-articles"><input type="checkbox"> Include all in CV</label>
+        <button class="btn-ghost hidden add-record-btn" data-type="popular-articles">+ Add Article</button>
+      </div>
+      <div class="record-list" id="popularArticlesList"></div>
+    </div>
+
+    <div class="other-pub-panel hidden" data-other-pub-panel="policy-papers">
+      <div class="section-header">
+        <label class="section-header-tick hidden" data-select-all="policy-papers"><input type="checkbox"> Include all in CV</label>
+        <button class="btn-ghost hidden add-record-btn" data-type="policy-papers">+ Add Policy Paper</button>
+      </div>
+      <div class="record-list" id="policyPapersList"></div>
+    </div>
+
+    <div class="other-pub-panel hidden" data-other-pub-panel="manuals">
+      <div class="section-header">
+        <label class="section-header-tick hidden" data-select-all="manuals"><input type="checkbox"> Include all in CV</label>
+        <button class="btn-ghost hidden add-record-btn" data-type="manuals">+ Add Manual</button>
+      </div>
+      <div class="record-list" id="manualsList"></div>
+    </div>
   </section>
 
   <!-- ============ SOFTWARE ============ -->
@@ -222,10 +271,10 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
 <div class="modal-backdrop" id="loginModalBackdrop">
   <div class="modal">
     <button class="modal-close" data-close="loginModalBackdrop">&times;</button>
-    <h2>Admin Login</h2>
+    <h2 id="loginModalTitle">Admin Login</h2>
 
     <div id="loginStep1">
-      <p class="modal-hint">Sign in to add or edit publication records.</p>
+      <p class="modal-hint" id="loginModalHint">Sign in to add or edit publication records.</p>
       <label for="loginEmail">Email</label>
       <input type="email" id="loginEmail" placeholder="you@example.com">
       <label for="loginPassword">Password</label>
@@ -415,6 +464,38 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   </div>
 </div>
 
+<!-- Manage Login modal -->
+<div class="modal-backdrop" id="manageLoginModalBackdrop">
+  <div class="modal">
+    <button class="modal-close" data-close="manageLoginModalBackdrop">&times;</button>
+    <h2>Manage Login</h2>
+    <p class="modal-hint" id="manageLoginHint">Set a login for the currently-selected profile so that person can sign in and manage only their own content.</p>
+    <label for="mlEmail">Login Email</label>
+    <input id="mlEmail" type="email" placeholder="e.g. ranjit@example.com">
+    <label for="mlPassword">Password (min 6 characters)</label>
+    <input id="mlPassword" type="text" placeholder="Choose a password — write it down for them">
+    <button class="btn-primary" id="manageLoginSubmit">Save Login</button>
+    <button type="button" class="btn-secondary" id="manageLoginRemove">Remove Login</button>
+    <p class="modal-error" id="manageLoginError"></p>
+    <p class="modal-success" id="manageLoginSuccess"></p>
+  </div>
+</div>
+
+<!-- Team Member modal -->
+<div class="modal-backdrop" id="teamMemberModalBackdrop">
+  <div class="modal">
+    <button class="modal-close" data-close="teamMemberModalBackdrop">&times;</button>
+    <h2 id="teamMemberModalTitle">Add Team Member</h2>
+    <label for="tmName">Name</label>
+    <input id="tmName" placeholder="e.g. Dr. Jane Smith">
+    <label for="tmDesignation">Designation</label>
+    <input id="tmDesignation" placeholder="e.g. PhD Scholar">
+    <p class="modal-hint">You can add a photo after saving, from the "Change Photo" link on their card.</p>
+    <button class="btn-primary" id="teamMemberSubmit">Save</button>
+    <p class="modal-error" id="teamMemberError"></p>
+  </div>
+</div>
+
 <!-- Add User modal -->
 <div class="modal-backdrop" id="addUserModalBackdrop">
   <div class="modal">
@@ -460,19 +541,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   </div>
 </div>
 
-<!-- Edit Research Interest modal -->
-<div class="modal-backdrop" id="editInterestModalBackdrop">
-  <div class="modal">
-    <button class="modal-close" data-close="editInterestModalBackdrop">&times;</button>
-    <h2>Edit Research Interest</h2>
-    <label for="riText">Research Interest</label>
-    <textarea id="riText" rows="6"></textarea>
-    <button class="btn-primary" id="editInterestSubmit">Save</button>
-    <p class="modal-error" id="editInterestError"></p>
-  </div>
-</div>
-
-<!-- Edit List Block modal (reused for Education / Employment / Accolades / Other Records) -->
+<!-- Edit List Block modal (reused for Research Interest / Education / Employment / Accolades / Other Records) -->
 <div class="modal-backdrop" id="editListModalBackdrop">
   <div class="modal modal-wide">
     <button class="modal-close" data-close="editListModalBackdrop">&times;</button>

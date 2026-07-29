@@ -1,6 +1,6 @@
 :root {
   --ink: #1C2B39;
-  --paper: #F7F3EA;
+  --paper: #FFFFFF;
   --paper-raised: #FFFFFF;
   --line: #DCD5C4;
   --olive: #5F6E45;
@@ -207,20 +207,23 @@ main { margin: 0 auto; padding: 0 32px 80px; }
 
 /* ---------------- Research Paper sub-tabs (All / Selected) ---------------- */
 .pub-subtabs {
-  display: flex; gap: 4px;
-  padding: 14px 0 0;
-  border-bottom: 1px solid var(--line);
+  display: inline-flex; gap: 4px;
+  margin: 16px 0 18px;
+  padding: 4px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 10px;
 }
 .pub-subtab {
   background: none; border: none;
-  padding: 8px 16px;
-  font-family: var(--font-sans); font-size: 0.9rem; font-weight: 600;
+  padding: 10px 24px;
+  font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700;
   color: var(--slate); cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  border-radius: 7px;
+  transition: background 0.15s, color 0.15s;
 }
-.pub-subtab.active { color: var(--olive-dark); border-bottom-color: var(--olive-dark); }
-.pub-subtab:hover { color: var(--ink); }
+.pub-subtab.active { color: #fff; background: var(--olive-dark); box-shadow: 0 2px 6px rgba(69,79,50,0.3); }
+.pub-subtab:not(.active):hover { color: var(--ink); background: var(--paper); }
 
 /* Select-star toggle icon on each paper card (admin only) */
 .select-star-btn {
@@ -496,7 +499,7 @@ main { margin: 0 auto; padding: 0 32px 80px; }
   gap: 36px;
   align-items: center;
   max-width: 880px;
-  margin-left: 40px;
+  margin: 0 auto;
 }
 .block-photo-col { display: flex; flex-direction: column; align-items: center; gap: 14px; }
 .block-photo {
@@ -554,6 +557,38 @@ main { margin: 0 auto; padding: 0 32px 80px; }
 
 /* ---- Timeline List Blocks ---- */
 .block-list { list-style: none; margin: 0; padding: 0; }
+/* ---- Research Team grid ---- */
+.team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 20px;
+  margin-bottom: 16px;
+}
+.team-card {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center;
+  text-align: center;
+  padding: 16px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper-raised);
+}
+.team-card.item-hidden { opacity: 0.4; border-style: dashed; }
+.team-drag-handle { position: absolute; top: 8px; left: 8px; cursor: grab; color: var(--slate); }
+.team-photo-wrap { position: relative; margin-bottom: 10px; }
+.team-photo {
+  width: 88px; height: 88px; object-fit: cover; border-radius: 50%;
+  border: 2px solid var(--line);
+}
+.team-photo-upload-btn {
+  display: block; margin-top: 6px; font-size: 0.66rem; font-weight: 600;
+  color: var(--olive-dark); cursor: pointer; text-decoration: underline;
+}
+.team-name { font-weight: 700; font-size: 0.88rem; color: var(--ink); }
+.team-designation { font-size: 0.76rem; color: var(--slate); margin-top: 2px; }
+.team-card-actions { display: flex; gap: 4px; margin-top: 10px; flex-wrap: wrap; justify-content: center; }
+.team-card-actions .icon-btn { font-size: 0.62rem; padding: 3px 6px; }
+
 .block-list-item {
   display: flex; align-items: baseline; gap: 12px;
   padding: 12px 0 12px 20px; border-bottom: none;

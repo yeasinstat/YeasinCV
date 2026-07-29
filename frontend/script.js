@@ -1,6 +1,9 @@
 const API_BASE = "/api";
 
 let authToken = null;
+let sessionRole = null; // "super_admin" or "scientist"
+let sessionScientistId = null; // set when sessionRole === "scientist"
+let loginEntryPoint = null; // "admin" or "user" — tracks which button was used to log in
 let currentScientistId = parseInt(localStorage.getItem("currentScientistId") || "1", 10) || 1;
 let allScientists = [];
 let currentPapers = [];
@@ -23,7 +26,7 @@ document.querySelectorAll(".modal-backdrop").forEach(bd => {
 });
 
 // Endpoints that are NOT specific to one scientist's profile — skip auto-injecting scientist_id
-const SCIENTIST_SCOPE_SKIP = ["/login", "/verify-otp", "/scientists", "/journal-scores", "/database", "/software/update-downloads"];
+const SCIENTIST_SCOPE_SKIP = ["/login", "/verify-otp", "/scientists", "/journal-scores", "/database"];
 
 function withScientistId(path) {
   if (SCIENTIST_SCOPE_SKIP.some(skip => path.startsWith(skip))) return path;
@@ -58,9 +61,11 @@ function escapeHtml(str) {
 
 // ---------------- profile ----------------
 // ============ Profile Blocks System ============
-const DEFAULT_BLOCK_ORDER = ["header", "research_interest", "education", "accolades", "employment", "other_records"];
+const HOME_BLOCK_ORDER = ["header", "research_interest", "current_work", "research_team"];
+const PERSONAL_BLOCK_ORDER = ["education", "accolades", "employment", "other_records"];
 let profileLayout = {}; // { block_order: [...], hidden_blocks: [...], items: { education: { order: [...], hidden: [...] } } }
 let scientistData = null;
+let researchTeamData = [];
 
 async function loadProfile() {
   try {
@@ -71,16 +76,27 @@ async function loadProfile() {
       `${s.designation} · ${s.institute.split("(")[1]?.replace(")", "") || s.institute}`;
 
     try { profileLayout = await api("/profile-layout"); } catch { profileLayout = {}; }
-    renderProfileBlocks();
+    try { researchTeamData = await api("/research-team"); } catch { researchTeamData = []; }
+    renderProfileBlocks("profileBlocks", HOME_BLOCK_ORDER);
+    renderProfileBlocks("personalDetailsBlocks", PERSONAL_BLOCK_ORDER);
   } catch (e) { /* backend not reachable yet */ }
 }
 
-function renderProfileBlocks() {
+async function reloadResearchTeam() {
+  try { researchTeamData = await api("/research-team"); } catch { researchTeamData = []; }
+  renderProfileBlocks("profileBlocks", HOME_BLOCK_ORDER);
+}
+
+function renderProfileBlocks(containerId, blockIds) {
   const s = scientistData;
   if (!s) return;
-  const container = $("profileBlocks");
+  const container = $(containerId);
+  if (!container) return;
   const isAdmin = !!authToken;
-  const blockOrder = profileLayout.block_order || DEFAULT_BLOCK_ORDER;
+  const fullBlockOrder = profileLayout.block_order || [...HOME_BLOCK_ORDER, ...PERSONAL_BLOCK_ORDER];
+  const blockOrder = fullBlockOrder.filter(id => blockIds.includes(id));
+  // include any block from this group not yet in the saved order (e.g. newly added block types)
+  blockIds.forEach(id => { if (!blockOrder.includes(id)) blockOrder.push(id); });
   const hiddenBlocks = new Set(profileLayout.hidden_blocks || []);
   const items = profileLayout.items || {};
   // cv_blocks/cv_items: undefined/null means "everything included" (default state)
@@ -115,10 +131,13 @@ function renderProfileBlocks() {
       return { title: "", html: inner };
     },
 
-    research_interest: () => ({
-      title: "Research Interest",
-      html: `<p class="block-interest-text">${escapeHtml(s.research_interest || "")}</p>`
-    }),
+    research_interest: () => renderListBlock("Research Interest", s.research_interest || [], "research_interest",
+      r => escapeHtml(r)),
+
+    current_work: () => renderListBlock("Current Work", s.current_work || [], "current_work",
+      r => escapeHtml(r)),
+
+    research_team: () => renderTeamBlock(),
 
     education: () => renderListBlock("Education", s.education || [], "education",
       e => `<strong>${escapeHtml(e.degree)}</strong> (${escapeHtml(e.year)}) &middot; ${escapeHtml(e.institution)}`),
@@ -154,6 +173,29 @@ function renderProfileBlocks() {
     }).join("");
 
     return { title, html: `<ul class="block-list" data-block-key="${key}">${listHtml}</ul>` };
+  }
+
+  function renderTeamBlock() {
+    const cards = researchTeamData.map(m => {
+      if (m.hidden && !isAdmin) return "";
+      return `<div class="team-card${m.hidden ? " item-hidden" : ""}" data-member-id="${m.member_id}">
+        ${isAdmin ? `<span class="item-drag-handle team-drag-handle" title="Drag to reorder">⠿</span>` : ""}
+        <div class="team-photo-wrap">
+          <img src="${escapeHtml(m.photo_filename || 'yeasin-photo.png')}" alt="Photo of ${escapeHtml(m.name)}" class="team-photo" onerror="this.src='yeasin-photo.png'">
+          ${isAdmin ? `<label class="team-photo-upload-btn">Change Photo<input type="file" accept=".png,.jpg,.jpeg,.webp" class="team-photo-input" data-member-id="${m.member_id}" hidden></label>` : ""}
+        </div>
+        <div class="team-name">${escapeHtml(m.name)}</div>
+        <div class="team-designation">${escapeHtml(m.designation || "")}</div>
+        ${isAdmin ? `<div class="team-card-actions">
+          <button class="icon-btn" data-team-edit="${m.member_id}">Edit</button>
+          <button class="icon-btn" data-team-toggle-hidden="${m.member_id}">${m.hidden ? "Show" : "Hide"}</button>
+          <button class="icon-btn danger" data-team-delete="${m.member_id}">Delete</button>
+        </div>` : ""}
+      </div>`;
+    }).join("");
+    const addBtn = isAdmin ? `<button type="button" class="btn-secondary" id="addTeamMemberBtn">+ Add Team Member</button>` : "";
+    if (!researchTeamData.length && !isAdmin) return { title: "", html: "" };
+    return { title: "Research Team", html: `<div class="team-grid" id="teamGrid">${cards}</div>${addBtn}` };
   }
 
   let html = "";
@@ -239,7 +281,56 @@ function renderProfileBlocks() {
         onEnd: () => saveItemOrder(list.dataset.blockKey, list),
       });
     });
+
+    // Research Team: its own drag-reorder (writes to the DB, not profileLayout)
+    const teamGrid = container.querySelector("#teamGrid");
+    if (teamGrid) {
+      new Sortable(teamGrid, {
+        animation: 150,
+        handle: ".team-drag-handle",
+        ghostClass: "sortable-ghost",
+        onEnd: async () => {
+          const order = [...teamGrid.querySelectorAll(".team-card")].map(el => parseInt(el.dataset.memberId));
+          try { await api("/research-team/reorder", { method: "PUT", body: JSON.stringify({ order }) }); } catch (e) { console.error(e); }
+        },
+      });
+    }
   }
+
+  // Research Team button wiring (works whether admin drag is active or not)
+  container.querySelectorAll("[data-team-edit]").forEach(btn => {
+    btn.addEventListener("click", () => openTeamMemberModal(parseInt(btn.dataset.teamEdit)));
+  });
+  container.querySelectorAll("[data-team-delete]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Remove this team member?")) return;
+      try {
+        await api(`/research-team/${btn.dataset.teamDelete}`, { method: "DELETE" });
+        await reloadResearchTeam();
+      } catch (e) { alert(e.message); }
+    });
+  });
+  container.querySelectorAll("[data-team-toggle-hidden]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      try {
+        await api(`/research-team/${btn.dataset.teamToggleHidden}/toggle-hidden`, { method: "POST" });
+        await reloadResearchTeam();
+      } catch (e) { alert(e.message); }
+    });
+  });
+  container.querySelectorAll(".team-photo-input").forEach(input => {
+    input.addEventListener("change", async () => {
+      if (!input.files[0]) return;
+      const fd = new FormData();
+      fd.append("file", input.files[0]);
+      try {
+        await apiUpload(`/research-team/${input.dataset.memberId}/photo?scientist_id=${currentScientistId}`, fd);
+        await reloadResearchTeam();
+      } catch (e) { alert(e.message); }
+    });
+  });
+  const addTeamBtn = container.querySelector("#addTeamMemberBtn");
+  if (addTeamBtn) addTeamBtn.addEventListener("click", () => openTeamMemberModal(null));
 }
 
 function toggleBlockCv(blockId) {
@@ -273,7 +364,8 @@ function toggleBlock(blockId) {
   if (hidden.has(blockId)) hidden.delete(blockId); else hidden.add(blockId);
   profileLayout.hidden_blocks = [...hidden];
   saveLayout();
-  renderProfileBlocks();
+  renderProfileBlocks("profileBlocks", HOME_BLOCK_ORDER);
+  renderProfileBlocks("personalDetailsBlocks", PERSONAL_BLOCK_ORDER);
 }
 
 function toggleItem(blockKey, idx) {
@@ -283,7 +375,8 @@ function toggleItem(blockKey, idx) {
   if (hidden.has(idx)) hidden.delete(idx); else hidden.add(idx);
   profileLayout.items[blockKey].hidden = [...hidden];
   saveLayout();
-  renderProfileBlocks();
+  renderProfileBlocks("profileBlocks", HOME_BLOCK_ORDER);
+  renderProfileBlocks("personalDetailsBlocks", PERSONAL_BLOCK_ORDER);
 }
 
 function saveBlockOrder() {
@@ -313,6 +406,12 @@ function saveLayout() {
 
 // ---------------- Home content editing ----------------
 const LIST_BLOCK_SCHEMAS = {
+  research_interest: { title: "Edit Research Interest", fields: [
+    { key: "_value", label: "Research Interest Point" },
+  ] },
+  current_work: { title: "Edit Current Work", fields: [
+    { key: "_value", label: "Current Work Point" },
+  ] },
   education: { title: "Edit Education", fields: [
     { key: "degree", label: "Degree" }, { key: "year", label: "Year" }, { key: "institution", label: "Institution" },
   ] },
@@ -327,9 +426,40 @@ const LIST_BLOCK_SCHEMAS = {
   ] },
 };
 
+let editingTeamMemberId = null;
+function openTeamMemberModal(memberId) {
+  editingTeamMemberId = memberId;
+  $("teamMemberError").textContent = "";
+  if (memberId) {
+    const m = researchTeamData.find(x => x.member_id === memberId);
+    $("teamMemberModalTitle").textContent = "Edit Team Member";
+    $("tmName").value = m ? m.name : "";
+    $("tmDesignation").value = m ? m.designation : "";
+  } else {
+    $("teamMemberModalTitle").textContent = "Add Team Member";
+    $("tmName").value = ""; $("tmDesignation").value = "";
+  }
+  openModal("teamMemberModalBackdrop");
+}
+
+$("teamMemberSubmit").addEventListener("click", async () => {
+  $("teamMemberError").textContent = "";
+  const payload = { name: $("tmName").value, designation: $("tmDesignation").value };
+  try {
+    if (editingTeamMemberId) {
+      await api(`/research-team/${editingTeamMemberId}`, { method: "PUT", body: JSON.stringify(payload) });
+    } else {
+      await api("/research-team", { method: "POST", body: JSON.stringify(payload) });
+    }
+    closeModal("teamMemberModalBackdrop");
+    await reloadResearchTeam();
+  } catch (e) {
+    $("teamMemberError").textContent = e.message;
+  }
+});
+
 function openBlockEditModal(blockId) {
   if (blockId === "header") return openEditHeaderModal();
-  if (blockId === "research_interest") return openEditInterestModal();
   if (LIST_BLOCK_SCHEMAS[blockId]) return openEditListModal(blockId);
 }
 
@@ -368,23 +498,6 @@ $("editHeaderSubmit").addEventListener("click", async () => {
     await loadScientistSwitcher();
   } catch (e) {
     $("editHeaderError").textContent = e.message;
-  }
-});
-
-function openEditInterestModal() {
-  $("editInterestError").textContent = "";
-  $("riText").value = scientistData.research_interest || "";
-  openModal("editInterestModalBackdrop");
-}
-
-$("editInterestSubmit").addEventListener("click", async () => {
-  $("editInterestError").textContent = "";
-  try {
-    await api("/scientist", { method: "PUT", body: JSON.stringify({ research_interest: $("riText").value }) });
-    closeModal("editInterestModalBackdrop");
-    await loadProfile();
-  } catch (e) {
-    $("editInterestError").textContent = e.message;
   }
 });
 
@@ -463,6 +576,61 @@ $("addUserSubmit").addEventListener("click", async () => {
   }
 });
 
+// ---------------- Manage Login (super admin sets/resets a scientist's own login) ----------------
+$("manageLoginBtn").addEventListener("click", () => {
+  $("manageLoginError").textContent = ""; $("manageLoginSuccess").textContent = "";
+  $("mlEmail").value = ""; $("mlPassword").value = "";
+  const current = allScientists.find(s => s.scientist_id === currentScientistId);
+  const name = current ? current.name : "this profile";
+  $("manageLoginHint").textContent = `Set a login for ${name} so they can sign in and manage only their own content.`;
+  if (current && current.login_email) $("mlEmail").value = current.login_email;
+  openModal("manageLoginModalBackdrop");
+});
+
+$("manageLoginSubmit").addEventListener("click", async () => {
+  $("manageLoginError").textContent = ""; $("manageLoginSuccess").textContent = "";
+  try {
+    const res = await api("/scientist/login", { method: "PUT", body: JSON.stringify({
+      login_email: $("mlEmail").value, password: $("mlPassword").value,
+    }) });
+    $("manageLoginSuccess").textContent = res.message;
+    await loadScientistSwitcher();
+  } catch (e) {
+    $("manageLoginError").textContent = e.message;
+  }
+});
+
+$("manageLoginRemove").addEventListener("click", async () => {
+  if (!confirm("Remove this profile's own login? Only the site admin will be able to manage it after this.")) return;
+  $("manageLoginError").textContent = ""; $("manageLoginSuccess").textContent = "";
+  try {
+    const res = await api("/scientist/login", { method: "DELETE" });
+    $("manageLoginSuccess").textContent = res.message;
+    $("mlEmail").value = ""; $("mlPassword").value = "";
+    await loadScientistSwitcher();
+  } catch (e) {
+    $("manageLoginError").textContent = e.message;
+  }
+});
+
+// ---------------- Delete User ----------------
+$("deleteUserBtn").addEventListener("click", async () => {
+  const current = allScientists.find(s => s.scientist_id === currentScientistId);
+  const name = current ? current.name : "this profile";
+  if (!confirm(`Are you sure you want to delete ${name}? This permanently removes their entire profile — all publications, awards, projects, and every other record. This cannot be undone.`)) return;
+  try {
+    const res = await api(`/scientists/${currentScientistId}`, { method: "DELETE" });
+    alert(res.message);
+    await loadScientistSwitcher();
+    currentScientistId = allScientists[0]?.scientist_id || 1;
+    localStorage.setItem("currentScientistId", String(currentScientistId));
+    await loadScientistSwitcher();
+    await reloadForScientist();
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
 // ---------------- section nav ----------------
 document.querySelectorAll(".nav-tab").forEach(tab => {
   tab.addEventListener("click", () => {
@@ -477,10 +645,11 @@ document.querySelectorAll(".nav-tab").forEach(tab => {
 
 function loadSection(section) {
   if (section === "publications") { loadPapers(); return; }
+  if (section === "personal-details") { renderProfileBlocks("personalDetailsBlocks", PERSONAL_BLOCK_ORDER); return; }
+  if (section === "book-chapters") { loadOtherPublications(); return; }
   const map = {
     "awards": { endpoint: "/awards", render: renderAwards, container: "awardsList" },
     "projects": { endpoint: "/projects", render: renderProjects, container: "projectsList" },
-    "book-chapters": { endpoint: "/book-chapters", render: renderBookChapters, container: "bookChaptersList" },
     "software": { endpoint: "/software", render: renderSoftware, container: "softwareList" },
     "courses-taught": { endpoint: "/courses-taught", render: renderCoursesTaught, container: "coursesTaughtList" },
     "students-guided": { endpoint: "/students-guided", render: renderStudentsGuided, container: "studentsGuidedList" },
@@ -492,6 +661,31 @@ function loadSection(section) {
     $(cfg.container).innerHTML = `<div class="empty-state">Could not load this section.</div>`;
   });
 }
+
+function loadOtherPublications() {
+  const parts = [
+    { endpoint: "/book-chapters", render: renderBookChapters, container: "bookChaptersList" },
+    { endpoint: "/popular-articles", render: renderPopularArticles, container: "popularArticlesList" },
+    { endpoint: "/policy-papers", render: renderPolicyPapers, container: "policyPapersList" },
+    { endpoint: "/manuals", render: renderManuals, container: "manualsList" },
+  ];
+  parts.forEach(cfg => {
+    api(cfg.endpoint).then(items => cfg.render(items)).catch(() => {
+      $(cfg.container).innerHTML = `<div class="empty-state">Could not load this section.</div>`;
+    });
+  });
+}
+
+document.querySelectorAll('#otherPubSubtabs .pub-subtab').forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll('#otherPubSubtabs .pub-subtab').forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    const key = tab.dataset.otherPub;
+    document.querySelectorAll('.other-pub-panel').forEach(panel => {
+      panel.classList.toggle("hidden", panel.dataset.otherPubPanel !== key);
+    });
+  });
+});
 
 // ---------------- filters (publications) ----------------
 async function loadFilterOptions() {
@@ -703,17 +897,35 @@ $("clearFilters").addEventListener("click", () => {
 });
 
 // ---------------- admin login / OTP ----------------
-$("adminBtn").addEventListener("click", () => {
-  if (authToken) {
-    authToken = null;
-    $("adminBtn").textContent = "Admin";
-    onAuthChange();
-    return;
-  }
+function openLoginModal(entryPoint) {
+  loginEntryPoint = entryPoint;
+  $("loginModalTitle").textContent = entryPoint === "user" ? "User Login" : "Admin Login";
+  $("loginModalHint").textContent = entryPoint === "user"
+    ? "Sign in with the email and password given to you by the site admin to manage your own profile."
+    : "Sign in to manage the whole site.";
   $("loginStep1").classList.remove("hidden");
   $("loginStep2").classList.add("hidden");
   $("loginError").textContent = "";
+  $("loginEmail").value = ""; $("loginPassword").value = "";
   openModal("loginModalBackdrop");
+}
+
+function signOut() {
+  authToken = null;
+  sessionRole = null;
+  sessionScientistId = null;
+  loginEntryPoint = null;
+  onAuthChange();
+}
+
+$("adminBtn").addEventListener("click", () => {
+  if (authToken) { signOut(); return; }
+  openLoginModal("admin");
+});
+
+$("userLoginBtn").addEventListener("click", () => {
+  if (authToken) { signOut(); return; }
+  openLoginModal("user");
 });
 
 $("loginSubmit").addEventListener("click", async () => {
@@ -721,7 +933,7 @@ $("loginSubmit").addEventListener("click", async () => {
   try {
     const res = await api("/login", {
       method: "POST",
-      body: JSON.stringify({ email: $("loginEmail").value, password: $("loginPassword").value }),
+      body: JSON.stringify({ email: $("loginEmail").value, password: $("loginPassword").value, login_type: loginEntryPoint }),
     });
     $("loginStep1").classList.add("hidden");
     $("loginStep2").classList.remove("hidden");
@@ -741,8 +953,15 @@ $("otpSubmit").addEventListener("click", async () => {
       body: JSON.stringify({ email: $("loginEmail").value, otp: $("otpInput").value }),
     });
     authToken = res.token;
-    $("adminBtn").textContent = "Sign out";
+    sessionRole = res.role || "super_admin";
+    sessionScientistId = res.scientist_id || null;
     closeModal("loginModalBackdrop");
+    if (sessionRole === "scientist" && sessionScientistId) {
+      currentScientistId = sessionScientistId;
+      localStorage.setItem("currentScientistId", String(currentScientistId));
+      await loadScientistSwitcher();
+      await reloadForScientist();
+    }
     onAuthChange();
   } catch (e) {
     $("otpError").textContent = e.message;
@@ -757,20 +976,47 @@ $("addPublicationBtn").addEventListener("click", () => {
 
 function onAuthChange() {
   const visible = !!authToken;
+  const isSuperAdmin = visible && sessionRole !== "scientist";
+
+  // Show only whichever login button was used; the other stays hidden while
+  // logged in, and the active one becomes "Sign out" for that session.
+  if (visible) {
+    $("adminBtn").classList.toggle("hidden", loginEntryPoint !== "admin");
+    $("userLoginBtn").classList.toggle("hidden", loginEntryPoint !== "user");
+    $("adminBtn").textContent = "Sign out";
+    $("userLoginBtn").textContent = "Sign out";
+  } else {
+    $("adminBtn").classList.remove("hidden");
+    $("userLoginBtn").classList.remove("hidden");
+    $("adminBtn").textContent = "Admin";
+    $("userLoginBtn").textContent = "User Login";
+  }
+
+  // Available to any logged-in profile owner (or the super admin)
   $("addPublicationBtn").classList.toggle("hidden", !visible);
   $("enrichAllBtn").classList.toggle("hidden", !visible);
   $("updateDownloadsBtn").classList.toggle("hidden", !visible);
-  $("exportBackupBtn").classList.toggle("hidden", !visible);
-  $("exportSnapshotBtn").classList.toggle("hidden", !visible);
-  $("resetScoresBtn").classList.toggle("hidden", !visible);
-  $("uploadNaasBtn").classList.toggle("hidden", !visible);
-  $("uploadJcrBtn").classList.toggle("hidden", !visible);
   $("downloadCvBtn").classList.toggle("hidden", !visible);
-  $("addUserBtn").classList.toggle("hidden", !visible);
   document.querySelectorAll(".add-record-btn").forEach(b => b.classList.toggle("hidden", !visible));
   document.querySelectorAll(".section-header-tick").forEach(b => b.classList.toggle("hidden", !visible));
+
+  // Super-admin only — site-wide tools that touch more than one profile's data
+  $("exportBackupBtn").classList.toggle("hidden", !isSuperAdmin);
+  $("exportSnapshotBtn").classList.toggle("hidden", !isSuperAdmin);
+  $("resetScoresBtn").classList.toggle("hidden", !isSuperAdmin);
+  $("uploadNaasBtn").classList.toggle("hidden", !isSuperAdmin);
+  $("uploadJcrBtn").classList.toggle("hidden", !isSuperAdmin);
+  $("addUserBtn").classList.toggle("hidden", !isSuperAdmin);
+  $("manageLoginBtn").classList.toggle("hidden", !isSuperAdmin);
+  $("deleteUserBtn").classList.toggle("hidden", !isSuperAdmin);
+
+  // A scientist's own login can only ever view/edit their own profile —
+  // lock the switcher so they can't even try to select someone else's.
+  $("scientistSwitcher").disabled = (sessionRole === "scientist");
+
   // re-render profile blocks so admin controls (drag handles, hide buttons) appear/disappear
-  renderProfileBlocks();
+  renderProfileBlocks("profileBlocks", HOME_BLOCK_ORDER);
+  renderProfileBlocks("personalDetailsBlocks", PERSONAL_BLOCK_ORDER);
   // re-render whichever section is active so admin action buttons show/hide
   loadSection(currentSection);
   loadFilterOptions();
@@ -1174,11 +1420,43 @@ const RECORD_SCHEMAS = {
     idField: "tech_id",
     label: "Technology / Patent",
     fields: [
-      { key: "category", label: "Category", options: ["Patent", "Technology"] },
+      { key: "category", label: "Category", options: ["Patent", "Technology", "Copyright"] },
       { key: "authors", label: "Authors", full: true },
       { key: "year", label: "Year" },
       { key: "id_number", label: "Patent / Accession No." },
       { key: "title", label: "Title", full: true },
+    ],
+  },
+  "popular-articles": {
+    idField: "article_id",
+    label: "Popular Article",
+    fields: [
+      { key: "authors", label: "Authors", full: true },
+      { key: "year", label: "Year" },
+      { key: "publication", label: "Publication" },
+      { key: "title", label: "Title", full: true },
+      { key: "details", label: "Volume / Pages", full: true },
+    ],
+  },
+  "policy-papers": {
+    idField: "paper_id",
+    label: "Policy Paper",
+    fields: [
+      { key: "authors", label: "Authors", full: true },
+      { key: "year", label: "Year" },
+      { key: "id_number", label: "Reference No." },
+      { key: "title", label: "Title", full: true },
+      { key: "publisher", label: "Publisher", full: true },
+    ],
+  },
+  "manuals": {
+    idField: "manual_id",
+    label: "Manual",
+    fields: [
+      { key: "authors", label: "Authors", full: true },
+      { key: "year", label: "Year" },
+      { key: "title", label: "Title", full: true },
+      { key: "publisher", label: "Publisher", full: true },
     ],
   },
 };
@@ -1240,6 +1518,48 @@ function renderBookChapters(items) {
   wireRecordButtons("book-chapters", items, "book_chapter_id");
 }
 
+function renderPopularArticles(items) {
+  $("popularArticlesList").innerHTML = items.length ? items.map(it => `
+    <div class="record-entry" data-id="${it.article_id}">
+      <div class="record-main">
+        <h3 class="record-title">${escapeHtml(it.title)}</h3>
+        <div class="record-meta">${escapeHtml(it.authors)}</div>
+        <div class="record-meta">${escapeHtml(it.publication)}${it.details ? ", " + escapeHtml(it.details) : ""}${it.year ? " &middot; " + escapeHtml(it.year) : ""} ${recordTagsHtml(it)}</div>
+      </div>
+      ${recordActionsHtml("popular-articles", it.article_id, it.hidden, it.cv_included)}
+    </div>
+  `).join("") : `<div class="empty-state">No popular articles added yet.</div>`;
+  wireRecordButtons("popular-articles", items, "article_id");
+}
+
+function renderPolicyPapers(items) {
+  $("policyPapersList").innerHTML = items.length ? items.map(it => `
+    <div class="record-entry" data-id="${it.paper_id}">
+      <div class="record-main">
+        <h3 class="record-title">${escapeHtml(it.title)}</h3>
+        <div class="record-meta">${escapeHtml(it.authors)}</div>
+        <div class="record-meta">${escapeHtml(it.publisher)}${it.year ? " &middot; " + escapeHtml(it.year) : ""}${it.id_number ? " &middot; " + escapeHtml(it.id_number) : ""} ${recordTagsHtml(it)}</div>
+      </div>
+      ${recordActionsHtml("policy-papers", it.paper_id, it.hidden, it.cv_included)}
+    </div>
+  `).join("") : `<div class="empty-state">No policy papers added yet.</div>`;
+  wireRecordButtons("policy-papers", items, "paper_id");
+}
+
+function renderManuals(items) {
+  $("manualsList").innerHTML = items.length ? items.map(it => `
+    <div class="record-entry" data-id="${it.manual_id}">
+      <div class="record-main">
+        <h3 class="record-title">${escapeHtml(it.title)}</h3>
+        <div class="record-meta">${escapeHtml(it.authors)}</div>
+        <div class="record-meta">${escapeHtml(it.publisher)}${it.year ? " &middot; " + escapeHtml(it.year) : ""} ${recordTagsHtml(it)}</div>
+      </div>
+      ${recordActionsHtml("manuals", it.manual_id, it.hidden, it.cv_included)}
+    </div>
+  `).join("") : `<div class="empty-state">No manuals added yet.</div>`;
+  wireRecordButtons("manuals", items, "manual_id");
+}
+
 function renderSoftware(items) {
   $("softwareList").innerHTML = items.length ? items.map(it => `
     <div class="record-entry" data-id="${it.software_id}">
@@ -1283,7 +1603,10 @@ function renderStudentsGuided(items) {
 
 function renderTechnology(items) {
   const patents = items.filter(it => it.category === "Patent");
-  const tech = items.filter(it => it.category !== "Patent");
+  const tech = items.filter(it => it.category === "Technology");
+  const copyrights = items.filter(it => it.category === "Copyright");
+
+  const idLabel = (category) => category === "Patent" ? "Patent No." : category === "Copyright" ? "Copyright No." : "Accession No.";
 
   const renderGroup = (title, groupItems) => {
     if (!groupItems.length) return "";
@@ -1292,7 +1615,7 @@ function renderTechnology(items) {
         <div class="record-main">
           <h3 class="record-title">${escapeHtml(it.title)}</h3>
           <div class="record-meta">${escapeHtml(it.authors)}</div>
-          <div class="record-meta">${escapeHtml(it.year)} &middot; ${it.category === "Patent" ? "Patent No." : "Accession No."} ${escapeHtml(it.id_number)} ${recordTagsHtml(it)}</div>
+          <div class="record-meta">${escapeHtml(it.year)} &middot; ${idLabel(it.category)} ${escapeHtml(it.id_number)} ${recordTagsHtml(it)}</div>
         </div>
         ${recordActionsHtml("technology", it.tech_id, it.hidden, it.cv_included)}
       </div>
@@ -1300,8 +1623,8 @@ function renderTechnology(items) {
     return `<h3 class="tech-group-title">${title}</h3>${rows}`;
   };
 
-  const html = renderGroup("Design Patent Received", patents) + renderGroup("Technology (ICAR Accredited)", tech);
-  $("technologyList").innerHTML = html || `<div class="empty-state">No technology or patents added yet.</div>`;
+  const html = renderGroup("Design Patent", patents) + renderGroup("Technology", tech) + renderGroup("Copyright", copyrights);
+  $("technologyList").innerHTML = html || `<div class="empty-state">No technology, patents, or copyrights added yet.</div>`;
   wireRecordButtons("technology", items, "tech_id");
 }
 
