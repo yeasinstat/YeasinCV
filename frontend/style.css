@@ -499,7 +499,7 @@ main { margin: 0 auto; padding: 0 32px 80px; }
   gap: 36px;
   align-items: center;
   max-width: 880px;
-  margin: 0 auto;
+  margin-left: 40px;
 }
 .block-photo-col { display: flex; flex-direction: column; align-items: center; gap: 14px; }
 .block-photo {
