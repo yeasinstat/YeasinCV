@@ -1,0 +1,149 @@
+[
+  {
+    "package_name": "WaveLetLongMemory",
+    "reference": "Ranjit Kumar Paul and Sandipan Samanta (2017). WaveLetLongMemory: Estimating Long Memory using wavelets.",
+    "year": "2017",
+    "downloads": "14672",
+    "cran_url": "https://cran.r-project.org/package=WaveLetLongMemory"
+  },
+  {
+    "package_name": "TSF",
+    "reference": "Sandipan Samanta, Ranjit Kumar Paul and Dipankar Mitra (2017) TSF: Two Stage Forecasting (TSF) for Long Memory Time Series in Presence of Structural Break.",
+    "year": "2017",
+    "downloads": "22382",
+    "cran_url": "https://cran.r-project.org/package=TSF"
+  },
+  {
+    "package_name": "WaveletArima",
+    "reference": "Ranjit Kumar Paul, Sandipan Samanta, Md Yeasin (2022). WaveletArima: Wavelet-ARIMA Model for Time Series Forecasting.",
+    "year": "2022",
+    "downloads": "26521",
+    "cran_url": "https://cran.r-project.org/package=WaveletArima"
+  },
+  {
+    "package_name": "WaveletANN",
+    "reference": "Ranjit Kumar Paul (2019). WaveletANN: Wavelet ANN Model.",
+    "year": "2019",
+    "downloads": "19712",
+    "cran_url": "https://CRAN.Rproject.org/package=WaveletANN"
+  },
+  {
+    "package_name": "WaveletGARCH",
+    "reference": "Ranjit Kumar Paul, Sandipan Samanta and Ankit Tanwar (2020). WaveletGARCH: Fit the Wavelet-GARCH Model to Volatile Time Series Data.",
+    "year": "2020",
+    "downloads": "25627",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletGARCH"
+  },
+  {
+    "package_name": "VIRF",
+    "reference": "Ranjit Kumar Paul and Ankit Tanwar (2019). VIRF: Computation of Volatility Impulse Response Function of Multivariate Time Series.",
+    "year": "2019",
+    "downloads": "16751",
+    "cran_url": "https://cran.r-project.org/package=VIRF"
+  },
+  {
+    "package_name": "WaveletSVR",
+    "reference": "Ranjit Kumar Paul, Md Yeasin (2022). WaveletSVR: Wavelet-SVR Hybrid Model for Time Series Forecasting",
+    "year": "2022",
+    "downloads": "5882",
+    "cran_url": "https://cran.r-project.org/package=WaveletSVR"
+  },
+  {
+    "package_name": "WaveletRF",
+    "reference": "Ranjit Kumar Paul, Md Yeasin (2022). WaveletRF: Wavelet-RF Hybrid Model for Time Series Forecasting.",
+    "year": "2022",
+    "downloads": "6021",
+    "cran_url": "https://cran.r-project.org/package=WaveletRF"
+  },
+  {
+    "package_name": "TSLSTM",
+    "reference": "Ranjit Kumar Paul, Md Yeasin (2022). TSLSTM: Long Short Term Memory (LSTM) Model for Time Series Forecasting.",
+    "year": "2022",
+    "downloads": "11244",
+    "cran_url": "https://cran.r-project.org/package=TSLSTM"
+  },
+  {
+    "package_name": "TSANN",
+    "reference": "Md Yeasin, Ranjit Kumar Paul, Dipro Sinha (2022). TSANN: Time Series Artificial Neural Network",
+    "year": "2022",
+    "downloads": "9388",
+    "cran_url": "https://cran.r-project.org/package=TSANN"
+  },
+  {
+    "package_name": "OptiSembleForecasting",
+    "reference": "Md Yeasin, Ranjit Kumar Paul (2022). OptiSembleForecasting: Optimization Based Ensemble Forecasting Using MCS Algorithm.",
+    "year": "2022",
+    "downloads": "1788",
+    "cran_url": "https://cran.r-project.org/package=OptiSembleForecasting"
+  },
+  {
+    "package_name": "InterNL",
+    "reference": "Amrit Kumar Paul, Md Yeasin, Ranjit Kumar Paul, Mr. Subhankar Biswas, HS Roy, Prakash Kumar (2025). InterNL: Time Series Intervention Model Using Non-Linear Function",
+    "year": "2025",
+    "downloads": "1556",
+    "cran_url": "https://CRAN.R-project.org/package=InterNL"
+  },
+  {
+    "package_name": "ICompELM",
+    "reference": "Saikath Das, Ranjit Kumar Paul, Md Yeasin, Amrit Kumar Paul (2024) ICompELM: Independent Component Analysis Based Extreme Learning Machine",
+    "year": "2024",
+    "downloads": "3912",
+    "cran_url": "https://CRAN.R-project.org/package=ICompELM"
+  },
+  {
+    "package_name": "WaveletMLbestFL",
+    "reference": "Sandip Garai, Ranjit Kumar Paul (2023) WaveletMLbestFL: The Best Wavelet Filter-Level for Prepared Wavelet-Based Models",
+    "year": "2023",
+    "downloads": "12715",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletMLbestFL"
+  },
+  {
+    "package_name": "WaveletML",
+    "reference": "Sandip Garai, Ranjit Kumar Paul, Md Yeasin (2023) WaveletML: Wavelet Decomposition Based Hybrid Machine Learning Models",
+    "year": "2023",
+    "downloads": "3507",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletML"
+  },
+  {
+    "package_name": "CEEMDANML",
+    "reference": "Sandip Garai, Ranjit Kumar Paul, Md Yeasin (2023) CEEMDANML: CEEMDAN Decomposition Based Hybrid Machine Learning Models",
+    "year": "2023",
+    "downloads": "5522",
+    "cran_url": "https://CRAN.R-project.org/package=CEEMDANML"
+  },
+  {
+    "package_name": "WaveletGBM",
+    "reference": "Ranjit Kumar Paul, Md Yeasin (2023) WaveletGBM: Wavelet Based Gradient Boosting Method",
+    "year": "2023",
+    "downloads": "4010",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletGBM"
+  },
+  {
+    "package_name": "WaveletLSTM",
+    "reference": "Ranjit Kumar Paul, Md Yeasin (2023) WaveletLSTM: Wavelet Based LSTM Model",
+    "year": "2023",
+    "downloads": "4149",
+    "cran_url": "https://CRAN.R-project.org/package=WaveletLSTM"
+  },
+  {
+    "package_name": "PWEV",
+    "reference": "Ankit Kumar Singh, Ranjit Kumar Paul, Amrit Kumar Paul, Md Yeasin, Anita Sarkar (2024) PWEV: PSO Based Weighted Ensemble Algorithm for Volatility Modelling",
+    "year": "2024",
+    "downloads": "1541",
+    "cran_url": "https://CRAN.R-project.org/package=PWEV"
+  },
+  {
+    "package_name": "CGR",
+    "reference": "S Vishnu Shankar, Ranjit Kumar Paul, Himadri Shekhar Roy, Md Yeasin (2024) CGR: Compound Growth Rate for Capturing the Growth Rate Over the Period",
+    "year": "2024",
+    "downloads": "2361",
+    "cran_url": "https://CRAN.R-project.org/package=CGR"
+  },
+  {
+    "package_name": "CDVI",
+    "reference": "S Vishnu Shankar, Ranjit Kumar Paul, Md Yeasin, Himadri Shekhar Roy (2024) CDVI: Cuddy-Della Valle Index for Capturing the Instability in Time Series Data",
+    "year": "2024",
+    "downloads": "2283",
+    "cran_url": "https://CRAN.R-project.org/package=CDVI"
+  }
+]

@@ -1,0 +1,106 @@
+[
+  {
+    "investigators": "Ranjit Kumar Paul (PI)",
+    "project_title": "Development of weather-based crop yield forecasting models based on GARCH and Wavelet techniques",
+    "funding_agency": "Indian Agricultural Statistics Research Institute (IASRI)",
+    "date_start": "Oct 2011",
+    "date_end": "Jun 2013",
+    "status": "Completed"
+  },
+  {
+    "investigators": "Ranjit Kumar Paul",
+    "project_title": "Enhancing Resilience of Agriculture to Climate Change through Institutions, Technologies and Policies",
+    "funding_agency": "National Initiative on Climate Resilient Agriculture (NICRA), Government of India",
+    "date_start": "Aug 2011",
+    "date_end": "Mar 2014",
+    "status": "Completed"
+  },
+  {
+    "investigators": "Ranjit Kumar Paul (PI)",
+    "project_title": "Study of Commodity Price Forecast based on time series data",
+    "funding_agency": "Indian Agricultural Statistics Research Institute (IASRI)",
+    "date_start": "Feb 2013",
+    "date_end": "Feb 2015",
+    "status": "Completed"
+  },
+  {
+    "investigators": "Ranjit Kumar Paul (PI)",
+    "project_title": "A study on modelling and forecasting of time-series with long memory processes",
+    "funding_agency": "Indian Agricultural Statistics Research Institute (IASRI)",
+    "date_start": "May 2013",
+    "date_end": "Apr 2015",
+    "status": "Completed"
+  },
+  {
+    "investigators": "Ranjit Kumar Paul (PI)",
+    "project_title": "A study of some parametric nonlinear time-series models for describing cyclicity or volatility",
+    "funding_agency": "Indian Agricultural Statistics Research Institute (IASRI)",
+    "date_start": "May 2013",
+    "date_end": "Apr 2015",
+    "status": "Completed"
+  },
+  {
+    "investigators": "Ranjit Kumar Paul (Co-PI)",
+    "project_title": "Network Project on Market Intelligence",
+    "funding_agency": "ICAR",
+    "date_start": "2012",
+    "date_end": "2017",
+    "status": "Completed"
+  },
+  {
+    "investigators": "Ranjit Kumar Paul (Co-PI)",
+    "project_title": "Network Project on Impact Assessment of Agricultural Research and Development",
+    "funding_agency": "ICAR",
+    "date_start": "Jan 2015",
+    "date_end": "Mar 2017",
+    "status": "Completed"
+  },
+  {
+    "investigators": "Ranjit Kumar Paul (Co-PI)",
+    "project_title": "Impact of ICT on Agricultural Education in India",
+    "funding_agency": "ICAR-Extramural Project",
+    "date_start": "Apr 2016",
+    "date_end": "Mar 2017",
+    "status": "Completed"
+  },
+  {
+    "investigators": "Ranjit Kumar Paul (Co-PI)",
+    "project_title": "An effective approach for combining forecasts from time series and deep learning models",
+    "funding_agency": "Indian Agricultural Statistics Research Institute (IASRI)",
+    "date_start": "",
+    "date_end": "",
+    "status": "Ongoing"
+  },
+  {
+    "investigators": "Ranjit Kumar Paul (Co-PI)",
+    "project_title": "Market Information System",
+    "funding_agency": "ICAR",
+    "date_start": "",
+    "date_end": "",
+    "status": "Ongoing"
+  },
+  {
+    "investigators": "Ranjit Kumar Paul (Co-PI)",
+    "project_title": "Cereal Systems Initiative for South Asia (CSISA)",
+    "funding_agency": "CSISA",
+    "date_start": "",
+    "date_end": "",
+    "status": "Ongoing"
+  },
+  {
+    "investigators": "Ranjit Kumar Paul",
+    "project_title": "Identification of Principal Markets and Framework of Market co-integration",
+    "funding_agency": "Food and Agriculture Organization of the United Nations (FAO)",
+    "date_start": "",
+    "date_end": "",
+    "status": "Completed"
+  },
+  {
+    "investigators": "Ranjit Kumar Paul (Co-PI)",
+    "project_title": "Gene Selection for Classification of Crop Gene Expression Data",
+    "funding_agency": "IASRI",
+    "date_start": "2015",
+    "date_end": "2018",
+    "status": "Completed"
+  }
+]

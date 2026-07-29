@@ -48,6 +48,19 @@ body {
 .scientist-name { font-family: var(--font-serif); font-weight: 600; font-size: 1.04rem; }
 .scientist-role { font-size: 0.79rem; color: var(--slate); margin-top: 1px; }
 
+.scientist-switcher {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper-raised);
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+.scientist-switcher:hover { border-color: var(--olive-dark); }
+
 .btn-ghost {
   border: 1px solid var(--ink);
   background: transparent;
@@ -306,6 +319,19 @@ main { margin: 0 auto; padding: 0 32px 80px; }
   overflow-y: auto;
 }
 .modal-wide { max-width: 640px; }
+.edit-list-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.edit-list-row input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
 
 .modal h2 {
   font-family: var(--font-serif);
@@ -437,6 +463,12 @@ main { margin: 0 auto; padding: 0 32px 80px; }
   transition: background 0.15s;
 }
 .block-toggle-btn:hover { background: #f0ede4; }
+.block-edit-btn {
+  background: none; border: 1px solid var(--olive-dark); border-radius: 4px;
+  font-size: 0.75rem; padding: 3px 10px; cursor: pointer; color: var(--olive-dark); font-weight: 600;
+  transition: background 0.15s;
+}
+.block-edit-btn:hover { background: var(--olive-dark); color: #fff; }
 
 /* ---- Hero Header Block ---- */
 .profile-block[data-block-id="header"] {
@@ -454,6 +486,8 @@ main { margin: 0 auto; padding: 0 32px 80px; }
 .profile-block[data-block-id="header"] .profile-block-title { color: rgba(255,255,255,0.7); }
 .profile-block[data-block-id="header"] .block-drag-handle,
 .profile-block[data-block-id="header"] .block-toggle-btn { color: rgba(255,255,255,0.6); border-color: rgba(255,255,255,0.25); }
+.profile-block[data-block-id="header"] .block-edit-btn { color: rgba(255,255,255,0.85); border-color: rgba(255,255,255,0.5); }
+.profile-block[data-block-id="header"] .block-edit-btn:hover { background: rgba(255,255,255,0.15); }
 .profile-block[data-block-id="header"]:hover { transform: none; box-shadow: 0 8px 32px rgba(28,43,57,0.25); }
 
 .block-header-inner {

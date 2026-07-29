@@ -17,6 +17,8 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
 
 <header class="topbar">
   <div class="scientist-card" id="scientistCard">
+    <select id="scientistSwitcher" class="scientist-switcher" title="Switch scientist profile" aria-label="Switch scientist profile"></select>
+    <button class="btn-ghost hidden" id="addUserBtn">+ Add User</button>
     <div class="scientist-text">
       <div class="scientist-name">Dr. Md Yeasin</div>
       <div class="scientist-role">Scientist &middot; ICAR-IASRI, New Delhi</div>
@@ -410,6 +412,75 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
     </div>
     <button class="btn-primary" id="cvGenerateBtn">Generate &amp; Download</button>
     <p class="modal-error" id="cvError"></p>
+  </div>
+</div>
+
+<!-- Add User modal -->
+<div class="modal-backdrop" id="addUserModalBackdrop">
+  <div class="modal">
+    <button class="modal-close" data-close="addUserModalBackdrop">&times;</button>
+    <h2>Add User</h2>
+    <p class="modal-hint">Creates a brand-new, completely blank profile — Home, Research Paper, Awards, and every other tab start empty for this person to fill in themselves.</p>
+    <label for="newUserName">Full Name</label>
+    <input id="newUserName" placeholder="e.g. Dr. Jane Smith">
+    <label for="newUserDesignation">Designation (optional)</label>
+    <input id="newUserDesignation" placeholder="e.g. Scientist">
+    <label for="newUserInstitute">Institute (optional)</label>
+    <input id="newUserInstitute" placeholder="e.g. ICAR-IASRI">
+    <button class="btn-primary" id="addUserSubmit">Create Profile</button>
+    <p class="modal-error" id="addUserError"></p>
+  </div>
+</div>
+
+<!-- Edit Header block modal -->
+<div class="modal-backdrop" id="editHeaderModalBackdrop">
+  <div class="modal">
+    <button class="modal-close" data-close="editHeaderModalBackdrop">&times;</button>
+    <h2>Edit Header</h2>
+    <label for="ehPhoto">Profile Photo</label>
+    <input type="file" id="ehPhoto" accept=".png,.jpg,.jpeg,.webp">
+    <label for="ehName">Name</label>
+    <input id="ehName">
+    <label for="ehDesignation">Designation</label>
+    <input id="ehDesignation">
+    <label for="ehInstitute">Institute</label>
+    <input id="ehInstitute">
+    <label for="ehDob">Date of Birth</label>
+    <input id="ehDob">
+    <label for="ehMobile">Mobile (comma-separated if more than one)</label>
+    <input id="ehMobile">
+    <label for="ehEmail">Email (comma-separated if more than one)</label>
+    <input id="ehEmail">
+    <label for="ehScholar">Google Scholar URL</label>
+    <input id="ehScholar">
+    <label for="ehLinkedin">LinkedIn URL</label>
+    <input id="ehLinkedin">
+    <button class="btn-primary" id="editHeaderSubmit">Save</button>
+    <p class="modal-error" id="editHeaderError"></p>
+  </div>
+</div>
+
+<!-- Edit Research Interest modal -->
+<div class="modal-backdrop" id="editInterestModalBackdrop">
+  <div class="modal">
+    <button class="modal-close" data-close="editInterestModalBackdrop">&times;</button>
+    <h2>Edit Research Interest</h2>
+    <label for="riText">Research Interest</label>
+    <textarea id="riText" rows="6"></textarea>
+    <button class="btn-primary" id="editInterestSubmit">Save</button>
+    <p class="modal-error" id="editInterestError"></p>
+  </div>
+</div>
+
+<!-- Edit List Block modal (reused for Education / Employment / Accolades / Other Records) -->
+<div class="modal-backdrop" id="editListModalBackdrop">
+  <div class="modal modal-wide">
+    <button class="modal-close" data-close="editListModalBackdrop">&times;</button>
+    <h2 id="editListTitle">Edit</h2>
+    <div id="editListRows"></div>
+    <button type="button" class="btn-secondary" id="editListAddRow">+ Add Entry</button>
+    <button class="btn-primary" id="editListSubmit">Save</button>
+    <p class="modal-error" id="editListError"></p>
   </div>
 </div>
 

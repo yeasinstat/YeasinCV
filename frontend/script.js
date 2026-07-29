@@ -1,6 +1,8 @@
 const API_BASE = "/api";
 
 let authToken = null;
+let currentScientistId = parseInt(localStorage.getItem("currentScientistId") || "1", 10) || 1;
+let allScientists = [];
 let currentPapers = [];
 let filterOptions = { domains: [] };
 let selectedDomains = new Set();
@@ -20,11 +22,20 @@ document.querySelectorAll(".modal-backdrop").forEach(bd => {
   bd.addEventListener("click", (e) => { if (e.target === bd) bd.classList.remove("open"); });
 });
 
+// Endpoints that are NOT specific to one scientist's profile — skip auto-injecting scientist_id
+const SCIENTIST_SCOPE_SKIP = ["/login", "/verify-otp", "/scientists", "/journal-scores", "/database", "/software/update-downloads"];
+
+function withScientistId(path) {
+  if (SCIENTIST_SCOPE_SKIP.some(skip => path.startsWith(skip))) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}scientist_id=${currentScientistId}`;
+}
+
 async function api(path, options = {}) {
   const headers = options.headers || {};
   if (options.body) headers["Content-Type"] = "application/json";
   if (authToken) headers["Authorization"] = "Bearer " + authToken;
-  const res = await fetch(API_BASE + path, { ...options, headers });
+  const res = await fetch(API_BASE + withScientistId(path), { ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Request failed");
   return data;
@@ -87,12 +98,12 @@ function renderProfileBlocks() {
       const inner = `
         <div class="block-header-inner">
           <div class="block-photo-col">
-            <img src="yeasin-photo.png" alt="Photo of ${escapeHtml(s.name)}" class="block-photo">
+            <img src="${escapeHtml(s.photo_filename || 'yeasin-photo.png')}" alt="Photo of ${escapeHtml(s.name)}" class="block-photo" onerror="this.src='yeasin-photo.png'">
             <div class="block-links">
-              <a href="https://scholar.google.com/citations?user=xejMKD0AAAAJ&hl=en&oi=sra" target="_blank" rel="noopener" class="block-link-btn"><i class="fas fa-graduation-cap"></i>
-                <span>Google Scholar</span></a>
-              <a href="https://www.linkedin.com/in/dr-yeasin/" target="_blank" rel="noopener" class="block-link-btn"><i class="fab fa-linkedin"></i>
-                <span>LinkedIn</span></a>
+              ${s.scholar_url ? `<a href="${escapeHtml(s.scholar_url)}" target="_blank" rel="noopener" class="block-link-btn"><i class="fas fa-graduation-cap"></i>
+                <span>Google Scholar</span></a>` : ""}
+              ${s.linkedin_url ? `<a href="${escapeHtml(s.linkedin_url)}" target="_blank" rel="noopener" class="block-link-btn"><i class="fab fa-linkedin"></i>
+                <span>LinkedIn</span></a>` : ""}
             </div>
           </div>
           <div>
@@ -162,6 +173,7 @@ function renderProfileBlocks() {
             <input type="checkbox" class="block-cv-checkbox" data-block="${blockId}" ${cvOn ? "checked" : ""}>
           </label>
           <span class="block-drag-handle" title="Drag to reorder">⠿</span>
+          <button class="block-edit-btn" data-edit-block="${blockId}">Edit</button>
           <button class="block-toggle-btn" data-block="${blockId}">${isHidden ? "Show" : "Hide"}</button>
         </div>
       </div>` : (isAdmin ? `<div class="profile-block-header" style="border-bottom:none; margin-bottom:4px; padding-bottom:0;">
@@ -171,6 +183,7 @@ function renderProfileBlocks() {
             <input type="checkbox" class="block-cv-checkbox" data-block="${blockId}" ${cvOn ? "checked" : ""}>
           </label>
           <span class="block-drag-handle" title="Drag to reorder">⠿</span>
+          <button class="block-edit-btn" data-edit-block="${blockId}">Edit</button>
           <button class="block-toggle-btn" data-block="${blockId}">${isHidden ? "Show" : "Hide"}</button>
         </div>
       </div>` : "")}
@@ -181,6 +194,11 @@ function renderProfileBlocks() {
 
   // Add admin-logged-in class for CSS-based admin control visibility
   document.body.classList.toggle("admin-logged-in", isAdmin);
+
+  // Wire up block edit buttons
+  container.querySelectorAll(".block-edit-btn").forEach(btn => {
+    btn.addEventListener("click", () => openBlockEditModal(btn.dataset.editBlock));
+  });
 
   // Wire up block hide/show buttons
   container.querySelectorAll(".block-toggle-btn").forEach(btn => {
@@ -292,6 +310,158 @@ function saveLayout() {
     } catch (e) { console.error("Failed to save layout:", e); }
   }, 500);
 }
+
+// ---------------- Home content editing ----------------
+const LIST_BLOCK_SCHEMAS = {
+  education: { title: "Edit Education", fields: [
+    { key: "degree", label: "Degree" }, { key: "year", label: "Year" }, { key: "institution", label: "Institution" },
+  ] },
+  employment: { title: "Edit Employment", fields: [
+    { key: "period", label: "Period" }, { key: "role", label: "Role" }, { key: "institution", label: "Institution" },
+  ] },
+  accolades: { title: "Edit Academic Accolades", fields: [
+    { key: "_value", label: "Accolade" },
+  ] },
+  other_records: { title: "Edit Other Records", fields: [
+    { key: "_value", label: "Record" },
+  ] },
+};
+
+function openBlockEditModal(blockId) {
+  if (blockId === "header") return openEditHeaderModal();
+  if (blockId === "research_interest") return openEditInterestModal();
+  if (LIST_BLOCK_SCHEMAS[blockId]) return openEditListModal(blockId);
+}
+
+function openEditHeaderModal() {
+  const s = scientistData;
+  $("editHeaderError").textContent = "";
+  $("ehName").value = s.name || "";
+  $("ehDesignation").value = s.designation || "";
+  $("ehInstitute").value = s.institute || "";
+  $("ehDob").value = s.dob || "";
+  $("ehMobile").value = (s.mobile || []).join(", ");
+  $("ehEmail").value = (s.email || []).join(", ");
+  $("ehScholar").value = s.scholar_url || "";
+  $("ehLinkedin").value = s.linkedin_url || "";
+  $("ehPhoto").value = "";
+  openModal("editHeaderModalBackdrop");
+}
+
+$("editHeaderSubmit").addEventListener("click", async () => {
+  $("editHeaderError").textContent = "";
+  try {
+    if ($("ehPhoto").files[0]) {
+      const fd = new FormData();
+      fd.append("file", $("ehPhoto").files[0]);
+      await apiUpload(`/scientist/photo?scientist_id=${currentScientistId}`, fd);
+    }
+    await api("/scientist", { method: "PUT", body: JSON.stringify({
+      name: $("ehName").value, designation: $("ehDesignation").value, institute: $("ehInstitute").value,
+      dob: $("ehDob").value,
+      mobile: $("ehMobile").value.split(",").map(v => v.trim()).filter(Boolean),
+      email: $("ehEmail").value.split(",").map(v => v.trim()).filter(Boolean),
+      scholar_url: $("ehScholar").value, linkedin_url: $("ehLinkedin").value,
+    }) });
+    closeModal("editHeaderModalBackdrop");
+    await loadProfile();
+    await loadScientistSwitcher();
+  } catch (e) {
+    $("editHeaderError").textContent = e.message;
+  }
+});
+
+function openEditInterestModal() {
+  $("editInterestError").textContent = "";
+  $("riText").value = scientistData.research_interest || "";
+  openModal("editInterestModalBackdrop");
+}
+
+$("editInterestSubmit").addEventListener("click", async () => {
+  $("editInterestError").textContent = "";
+  try {
+    await api("/scientist", { method: "PUT", body: JSON.stringify({ research_interest: $("riText").value }) });
+    closeModal("editInterestModalBackdrop");
+    await loadProfile();
+  } catch (e) {
+    $("editInterestError").textContent = e.message;
+  }
+});
+
+let editingListBlockKey = null;
+function openEditListModal(blockKey) {
+  editingListBlockKey = blockKey;
+  const schema = LIST_BLOCK_SCHEMAS[blockKey];
+  $("editListTitle").textContent = schema.title;
+  $("editListError").textContent = "";
+  const data = scientistData[blockKey] || [];
+  $("editListRows").innerHTML = "";
+  data.forEach(item => addEditListRow(schema, item));
+  if (data.length === 0) addEditListRow(schema, null);
+  openModal("editListModalBackdrop");
+}
+
+function addEditListRow(schema, item) {
+  const row = document.createElement("div");
+  row.className = "edit-list-row";
+  row.innerHTML = schema.fields.map(f => {
+    const val = item ? (f.key === "_value" ? item : (item[f.key] || "")) : "";
+    return `<input data-field="${f.key}" placeholder="${escapeHtml(f.label)}" value="${escapeHtml(val)}">`;
+  }).join("") + `<button type="button" class="icon-btn danger edit-list-remove">Remove</button>`;
+  row.querySelector(".edit-list-remove").addEventListener("click", () => row.remove());
+  $("editListRows").appendChild(row);
+}
+
+$("editListAddRow").addEventListener("click", () => {
+  addEditListRow(LIST_BLOCK_SCHEMAS[editingListBlockKey], null);
+});
+
+$("editListSubmit").addEventListener("click", async () => {
+  $("editListError").textContent = "";
+  const schema = LIST_BLOCK_SCHEMAS[editingListBlockKey];
+  const rows = [...$("editListRows").querySelectorAll(".edit-list-row")];
+  const values = rows.map(row => {
+    const inputs = [...row.querySelectorAll("input")];
+    if (schema.fields.length === 1 && schema.fields[0].key === "_value") {
+      return inputs[0].value.trim();
+    }
+    const obj = {};
+    inputs.forEach(inp => obj[inp.dataset.field] = inp.value.trim());
+    return obj;
+  }).filter(v => typeof v === "string" ? v : Object.values(v).some(x => x));
+
+  try {
+    await api("/scientist", { method: "PUT", body: JSON.stringify({ [editingListBlockKey]: values }) });
+    closeModal("editListModalBackdrop");
+    await loadProfile();
+  } catch (e) {
+    $("editListError").textContent = e.message;
+  }
+});
+
+// ---------------- Add User ----------------
+$("addUserBtn").addEventListener("click", () => {
+  $("addUserError").textContent = "";
+  $("newUserName").value = ""; $("newUserDesignation").value = ""; $("newUserInstitute").value = "";
+  openModal("addUserModalBackdrop");
+});
+
+$("addUserSubmit").addEventListener("click", async () => {
+  $("addUserError").textContent = "";
+  try {
+    const res = await api("/scientists", { method: "POST", body: JSON.stringify({
+      name: $("newUserName").value, designation: $("newUserDesignation").value, institute: $("newUserInstitute").value,
+    }) });
+    closeModal("addUserModalBackdrop");
+    currentScientistId = res.scientist_id;
+    localStorage.setItem("currentScientistId", String(currentScientistId));
+    await loadScientistSwitcher();
+    await reloadForScientist();
+    alert(res.message);
+  } catch (e) {
+    $("addUserError").textContent = e.message;
+  }
+});
 
 // ---------------- section nav ----------------
 document.querySelectorAll(".nav-tab").forEach(tab => {
@@ -596,6 +766,7 @@ function onAuthChange() {
   $("uploadNaasBtn").classList.toggle("hidden", !visible);
   $("uploadJcrBtn").classList.toggle("hidden", !visible);
   $("downloadCvBtn").classList.toggle("hidden", !visible);
+  $("addUserBtn").classList.toggle("hidden", !visible);
   document.querySelectorAll(".add-record-btn").forEach(b => b.classList.toggle("hidden", !visible));
   document.querySelectorAll(".section-header-tick").forEach(b => b.classList.toggle("hidden", !visible));
   // re-render profile blocks so admin controls (drag handles, hide buttons) appear/disappear
@@ -910,7 +1081,7 @@ $("downloadCvBtn").addEventListener("click", async () => {
   try {
     const headers = {};
     if (authToken) headers["Authorization"] = "Bearer " + authToken;
-    const res = await fetch(API_BASE + "/cv/download", { method: "GET", headers });
+    const res = await fetch(API_BASE + `/cv/download?scientist_id=${currentScientistId}`, { method: "GET", headers });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || "Could not generate the CV.");
@@ -918,7 +1089,9 @@ $("downloadCvBtn").addEventListener("click", async () => {
     const blob = await res.blob();
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "Md_Yeasin_CV.pdf";
+    const cd = res.headers.get("Content-Disposition") || "";
+    const nameMatch = cd.match(/filename="?([^"]+)"?/);
+    a.href = url; a.download = nameMatch ? nameMatch[1] : "CV.pdf";
     document.body.appendChild(a); a.click(); a.remove();
     window.URL.revokeObjectURL(url);
   } catch (e) {
@@ -1240,8 +1413,43 @@ async function deleteRecord(type, id) {
   }
 }
 
+// ---------------- scientist switcher ----------------
+async function loadScientistSwitcher() {
+  try {
+    allScientists = await api("/scientists");
+  } catch (e) {
+    allScientists = [];
+    return;
+  }
+  const sel = $("scientistSwitcher");
+  if (!allScientists.some(s => s.scientist_id === currentScientistId)) {
+    currentScientistId = allScientists[0]?.scientist_id || 1;
+  }
+  sel.innerHTML = allScientists.map(s =>
+    `<option value="${s.scientist_id}" ${s.scientist_id === currentScientistId ? "selected" : ""}>${escapeHtml(s.name)}</option>`
+  ).join("");
+}
+
+$("scientistSwitcher").addEventListener("change", async (e) => {
+  currentScientistId = parseInt(e.target.value, 10);
+  localStorage.setItem("currentScientistId", String(currentScientistId));
+  await reloadForScientist();
+});
+
+async function reloadForScientist() {
+  await loadProfile();
+  await loadFilterOptions();
+  await loadStats();
+  if (currentSection === "publications") {
+    await loadPapers();
+  } else {
+    loadSection(currentSection);
+  }
+}
+
 // ---------------- init ----------------
 (async function init() {
+  await loadScientistSwitcher();
   await loadProfile();
   await loadFilterOptions();
   await loadStats();

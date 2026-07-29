@@ -33,6 +33,7 @@ except ImportError:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "research.db")
 SEED_PATH = os.path.join(BASE_DIR, "papers_seed.json")
+RANJIT_SEED_PATH = os.path.join(BASE_DIR, "ranjit_papers_seed.json")
 FRONTEND_DIR = os.path.join(BASE_DIR, "..", "frontend")
 
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
@@ -88,8 +89,30 @@ def close_db(exception):
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS scientists (
+    scientist_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug              TEXT UNIQUE,
+    name              TEXT,
+    designation       TEXT,
+    institute         TEXT,
+    address           TEXT,
+    dob               TEXT,
+    mobile            TEXT DEFAULT '[]',
+    email             TEXT DEFAULT '[]',
+    research_interest TEXT DEFAULT '',
+    education         TEXT DEFAULT '[]',
+    accolades         TEXT DEFAULT '[]',
+    employment        TEXT DEFAULT '[]',
+    other_records     TEXT DEFAULT '[]',
+    photo_filename    TEXT DEFAULT 'yeasin-photo.png',
+    scholar_url       TEXT DEFAULT '',
+    linkedin_url      TEXT DEFAULT '',
+    created_at        TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS papers (
     publication_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id         INTEGER DEFAULT 1,
     complete_reference   TEXT,
     title                TEXT,
     authors              TEXT,
@@ -115,6 +138,7 @@ CREATE TABLE IF NOT EXISTS papers (
 
 CREATE TABLE IF NOT EXISTS awards (
     award_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id  INTEGER DEFAULT 1,
     title         TEXT,
     awarding_body TEXT,
     year          TEXT,
@@ -126,6 +150,7 @@ CREATE TABLE IF NOT EXISTS awards (
 
 CREATE TABLE IF NOT EXISTS projects (
     project_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id    INTEGER DEFAULT 1,
     sl_no           TEXT,
     investigators   TEXT,
     project_title   TEXT,
@@ -140,6 +165,7 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE TABLE IF NOT EXISTS book_chapters (
     book_chapter_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id    INTEGER DEFAULT 1,
     title           TEXT,
     authors         TEXT,
     editor          TEXT DEFAULT '',
@@ -156,6 +182,7 @@ CREATE TABLE IF NOT EXISTS book_chapters (
 
 CREATE TABLE IF NOT EXISTS software (
     software_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER DEFAULT 1,
     package_name TEXT,
     reference    TEXT,
     year         TEXT,
@@ -167,16 +194,18 @@ CREATE TABLE IF NOT EXISTS software (
 );
 
 CREATE TABLE IF NOT EXISTS courses_taught (
-    course_id   INTEGER PRIMARY KEY AUTOINCREMENT,
-    sl_no       TEXT,
-    course_name TEXT,
-    hidden      INTEGER DEFAULT 0,
-    cv_included INTEGER DEFAULT 1,
-    created_at  TEXT DEFAULT (datetime('now'))
+    course_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER DEFAULT 1,
+    sl_no        TEXT,
+    course_name  TEXT,
+    hidden       INTEGER DEFAULT 0,
+    cv_included  INTEGER DEFAULT 1,
+    created_at   TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS students_guided (
     student_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER DEFAULT 1,
     name         TEXT,
     student_type TEXT DEFAULT '',
     start_date   TEXT,
@@ -188,15 +217,16 @@ CREATE TABLE IF NOT EXISTS students_guided (
 );
 
 CREATE TABLE IF NOT EXISTS technology (
-    tech_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-    category    TEXT DEFAULT 'Technology',
-    authors     TEXT,
-    year        TEXT,
-    title       TEXT,
-    id_number   TEXT,
-    hidden      INTEGER DEFAULT 0,
-    cv_included INTEGER DEFAULT 1,
-    created_at  TEXT DEFAULT (datetime('now'))
+    tech_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER DEFAULT 1,
+    category     TEXT DEFAULT 'Technology',
+    authors      TEXT,
+    year         TEXT,
+    title        TEXT,
+    id_number    TEXT,
+    hidden       INTEGER DEFAULT 0,
+    cv_included  INTEGER DEFAULT 1,
+    created_at   TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS journal_scores (
@@ -224,8 +254,8 @@ CREATE TABLE IF NOT EXISTS otp_codes (
 );
 
 CREATE TABLE IF NOT EXISTS profile_layout (
-    id      INTEGER PRIMARY KEY CHECK (id = 1),
-    config  TEXT DEFAULT '{}'
+    scientist_id INTEGER PRIMARY KEY,
+    config       TEXT DEFAULT '{}'
 );
 """
 
@@ -303,9 +333,38 @@ def migrate_db(conn):
         conn.execute("ALTER TABLE students_guided ADD COLUMN student_type TEXT DEFAULT ''")
     conn.commit()
 
+    sci_cols = {row[1] for row in conn.execute("PRAGMA table_info(scientists)")}
+    if "scholar_url" not in sci_cols:
+        conn.execute("ALTER TABLE scientists ADD COLUMN scholar_url TEXT DEFAULT ''")
+    if "linkedin_url" not in sci_cols:
+        conn.execute("ALTER TABLE scientists ADD COLUMN linkedin_url TEXT DEFAULT ''")
+    conn.commit()
+
     js_cols = {row[1] for row in conn.execute("PRAGMA table_info(journal_scores)")}
     if "issn" not in js_cols:
         conn.execute("ALTER TABLE journal_scores ADD COLUMN issn TEXT DEFAULT ''")
+    conn.commit()
+
+    # scientist_id on every content table, for multi-profile support. Existing
+    # rows default to 1 (the original/first scientist), so nothing already in
+    # the database gets orphaned or reassigned.
+    for _tbl in ("papers", "awards", "projects", "book_chapters", "software",
+                 "courses_taught", "students_guided", "technology"):
+        _cols = {row[1] for row in conn.execute(f"PRAGMA table_info({_tbl})")}
+        if "scientist_id" not in _cols:
+            conn.execute(f"ALTER TABLE {_tbl} ADD COLUMN scientist_id INTEGER DEFAULT 1")
+    conn.commit()
+
+    # profile_layout used to be a single fixed row (id=1). Rebuild it as a
+    # per-scientist table, carrying over any existing saved layout to
+    # scientist_id=1 so nothing already configured is lost.
+    pl_cols = {row[1] for row in conn.execute("PRAGMA table_info(profile_layout)")}
+    if "scientist_id" not in pl_cols:
+        old_row = conn.execute("SELECT config FROM profile_layout WHERE id = 1").fetchone() if "id" in pl_cols else None
+        conn.execute("DROP TABLE profile_layout")
+        conn.execute("CREATE TABLE profile_layout (scientist_id INTEGER PRIMARY KEY, config TEXT DEFAULT '{}')")
+        if old_row:
+            conn.execute("INSERT INTO profile_layout (scientist_id, config) VALUES (1, ?)", (old_row["config"],))
     conn.commit()
 
 
@@ -340,11 +399,55 @@ def init_db(force_reseed=False):
     conn.commit()
     migrate_db(conn)  # safe no-op if columns already exist
 
-    if (fresh and not restored_from_backup) or force_reseed:
-        if force_reseed:
-            conn.execute("DELETE FROM papers")
+    # ---- Seed the scientists table (profiles) if empty ----
+    sci_count = conn.execute("SELECT COUNT(*) FROM scientists").fetchone()[0]
+    if sci_count == 0:
+        for s in SCIENTISTS_SEED:
+            conn.execute(
+                """INSERT INTO scientists
+                (slug, name, designation, institute, address, dob, mobile, email,
+                 research_interest, education, accolades, employment, other_records,
+                 photo_filename, scholar_url, linkedin_url)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    s["slug"], s["name"], s["designation"], s["institute"], s["address"], s["dob"],
+                    json.dumps(s["mobile"]), json.dumps(s["email"]), s["research_interest"],
+                    json.dumps(s["education"]), json.dumps(s["accolades"]), json.dumps(s["employment"]),
+                    json.dumps(s["other_records"]), s["photo_filename"],
+                    s.get("scholar_url", ""), s.get("linkedin_url", ""),
+                ),
+            )
+        conn.commit()
 
-        with open(SEED_PATH, encoding="utf-8") as f:
+    # Backfill scholar_url/linkedin_url on scientist rows that already existed
+    # before these columns were added, or were seeded with blank/outdated
+    # links — matched by slug. This lets updating SCIENTISTS_SEED in code
+    # actually take effect on a database that was already seeded once,
+    # instead of only applying to a brand-new empty database.
+    for s in SCIENTISTS_SEED:
+        row = conn.execute("SELECT scholar_url, linkedin_url FROM scientists WHERE slug = ?", (s["slug"],)).fetchone()
+        if row and not row["scholar_url"] and not row["linkedin_url"]:
+            conn.execute(
+                "UPDATE scientists SET scholar_url = ?, linkedin_url = ? WHERE slug = ?",
+                (s.get("scholar_url", ""), s.get("linkedin_url", ""), s["slug"]),
+            )
+    conn.commit()
+
+    # ---- Seed each scientist's papers, if that scientist has none yet ----
+    # (Gated the same way every other section is: per-scientist row count,
+    # not overall database "freshness" — otherwise dropping in an existing
+    # research.db that predates a given scientist silently skips seeding
+    # their papers, even though every other section still seeds correctly.)
+    if force_reseed:
+        conn.execute("DELETE FROM papers")
+
+    for scientist_id, seed_path in ((1, SEED_PATH), (2, RANJIT_SEED_PATH)):
+        if not os.path.exists(seed_path):
+            continue
+        count = conn.execute("SELECT COUNT(*) FROM papers WHERE scientist_id = ?", (scientist_id,)).fetchone()[0]
+        if count > 0 and not force_reseed:
+            continue
+        with open(seed_path, encoding="utf-8") as f:
             records = json.load(f)
         for r in records:
             domains = classify_domains(r["title"])
@@ -352,12 +455,12 @@ def init_db(force_reseed=False):
             field = classify_field(domains)
             conn.execute(
                 """INSERT INTO papers
-                (complete_reference, title, authors, author_position, year,
+                (scientist_id, complete_reference, title, authors, author_position, year,
                  journal, publisher, issn, doi, article_type, impact_factor,
                  quartile, domain, field, hidden)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
                 (
-                    r["complete_reference"], r["title"], r["authors"],
+                    scientist_id, r["complete_reference"], r["title"], r["authors"],
                     r["author_position"], r["year"], r["journal"],
                     r.get("publisher", ""), r.get("issn", ""), r["doi"],
                     r["article_type"], r["impact_factor"], r["quartile"],
@@ -366,35 +469,36 @@ def init_db(force_reseed=False):
             )
         conn.commit()
 
-    # Seed Awards / Projects / Book Chapters / Software independently of the
-    # papers table's freshness — this matters when someone drops in an
-    # older research.db (with papers already populated) that predates these
-    # four tables: each one still gets seeded here as long as it's empty,
-    # rather than silently staying blank forever.
-    for path, table, cols in [
-        (AWARDS_SEED_PATH, "awards", ["title", "awarding_body", "year", "description"]),
-        (PROJECTS_SEED_PATH, "projects", ["investigators", "project_title", "funding_agency", "date_start", "date_end", "status"]),
-        (BOOK_CHAPTERS_SEED_PATH, "book_chapters", ["title", "authors", "editor", "book_title", "publisher", "year", "pages", "isbn", "doi"]),
-        (SOFTWARE_SEED_PATH, "software", ["package_name", "reference", "year", "downloads", "cran_url"]),
-        (COURSES_TAUGHT_SEED_PATH, "courses_taught", ["course_name"]),
-        (STUDENTS_GUIDED_SEED_PATH, "students_guided", ["name", "student_type", "start_date", "end_date", "description"]),
-        (TECHNOLOGY_SEED_PATH, "technology", ["category", "authors", "year", "title", "id_number"]),
-    ]:
-        if not os.path.exists(path):
-            continue
-        count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        if count > 0 and not force_reseed:
-            continue
-        if force_reseed:
-            conn.execute(f"DELETE FROM {table}")
-        with open(path, encoding="utf-8") as f:
-            items = json.load(f)
-        placeholders = ",".join(["?"] * len(cols))
-        for item in items:
-            conn.execute(
-                f"INSERT INTO {table} ({','.join(cols)}) VALUES ({placeholders})",
-                tuple(item.get(c, "") for c in cols),
-            )
+    # Seed Awards / Projects / Book Chapters / Software / Courses Taught /
+    # Students Guided / Technology independently of the papers table's
+    # freshness, per scientist — this matters when someone drops in an
+    # older research.db that predates these tables: each one still gets
+    # seeded here as long as it's empty for that scientist, rather than
+    # silently staying blank forever.
+    simple_seed_map = {
+        "awards": ["title", "awarding_body", "year", "description"],
+        "projects": ["investigators", "project_title", "funding_agency", "date_start", "date_end", "status"],
+        "book_chapters": ["title", "authors", "editor", "book_title", "publisher", "year", "pages", "isbn", "doi"],
+        "software": ["package_name", "reference", "year", "downloads", "cran_url"],
+        "courses_taught": ["course_name"],
+        "students_guided": ["name", "student_type", "start_date", "end_date", "description"],
+        "technology": ["category", "authors", "year", "title", "id_number"],
+    }
+    for scientist_id, path_prefix in ((1, ""), (2, "ranjit_")):
+        for table, cols in simple_seed_map.items():
+            path = os.path.join(BASE_DIR, f"{path_prefix}{table}_seed.json")
+            if not os.path.exists(path):
+                continue
+            count = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE scientist_id = ?", (scientist_id,)).fetchone()[0]
+            if count > 0 and not force_reseed:
+                continue
+            with open(path, encoding="utf-8") as f:
+                items = json.load(f)
+            all_cols = cols + ["scientist_id"]
+            placeholders = ",".join(["?"] * len(all_cols))
+            for item in items:
+                values = tuple(item.get(c, "") for c in cols) + (scientist_id,)
+                conn.execute(f"INSERT INTO {table} ({','.join(all_cols)}) VALUES ({placeholders})", values)
     conn.commit()
 
     _load_journal_scores_snapshot(conn)
@@ -752,8 +856,8 @@ def is_admin_request():
 @app.route("/api/papers", methods=["GET"])
 def get_papers():
     db = get_db()
-    query = "SELECT * FROM papers WHERE 1=1"
-    params = []
+    query = "SELECT * FROM papers WHERE scientist_id = ?"
+    params = [_get_scientist_id()]
 
     if not is_admin_request():
         query += " AND hidden = 0"
@@ -819,14 +923,15 @@ def get_papers():
 def get_filter_options():
     db = get_db()
     admin = is_admin_request()
+    sid = _get_scientist_id()
     hidden_clause = "" if admin else "AND hidden = 0"
 
-    years = [r[0] for r in db.execute(f"SELECT DISTINCT year FROM papers WHERE year != '' {hidden_clause} ORDER BY year DESC")]
-    journals = [r[0] for r in db.execute(f"SELECT DISTINCT journal FROM papers WHERE journal != '' {hidden_clause} ORDER BY journal")]
-    quartiles = [r[0] for r in db.execute(f"SELECT DISTINCT quartile FROM papers WHERE quartile != '' {hidden_clause} ORDER BY quartile")]
-    fields = [r[0] for r in db.execute(f"SELECT DISTINCT field FROM papers WHERE field != '' {hidden_clause} ORDER BY field")]
+    years = [r[0] for r in db.execute(f"SELECT DISTINCT year FROM papers WHERE scientist_id = ? AND year != '' {hidden_clause} ORDER BY year DESC", (sid,))]
+    journals = [r[0] for r in db.execute(f"SELECT DISTINCT journal FROM papers WHERE scientist_id = ? AND journal != '' {hidden_clause} ORDER BY journal", (sid,))]
+    quartiles = [r[0] for r in db.execute(f"SELECT DISTINCT quartile FROM papers WHERE scientist_id = ? AND quartile != '' {hidden_clause} ORDER BY quartile", (sid,))]
+    fields = [r[0] for r in db.execute(f"SELECT DISTINCT field FROM papers WHERE scientist_id = ? AND field != '' {hidden_clause} ORDER BY field", (sid,))]
 
-    domain_rows = db.execute(f"SELECT domain FROM papers WHERE domain != '' {hidden_clause}")
+    domain_rows = db.execute(f"SELECT domain FROM papers WHERE scientist_id = ? AND domain != '' {hidden_clause}", (sid,))
     domain_set = set()
     for (d,) in domain_rows:
         for part in d.split(","):
@@ -847,15 +952,15 @@ def get_filter_options():
 @app.route("/api/papers/stats", methods=["GET"])
 def get_stats():
     db = get_db()
-    hidden_clause = "" if is_admin_request() else "WHERE hidden = 0"
+    sid = _get_scientist_id()
+    hidden_clause = "" if is_admin_request() else "AND hidden = 0"
     year_clause = "year != ''" if is_admin_request() else "year != '' AND hidden = 0"
     quartile_clause = "quartile != ''" if is_admin_request() else "quartile != '' AND hidden = 0"
-    domain_clause = "1=1" if is_admin_request() else "hidden = 0"
 
-    total = db.execute(f"SELECT COUNT(*) FROM papers {hidden_clause}").fetchone()[0]
-    by_year = db.execute(f"SELECT year, COUNT(*) c FROM papers WHERE {year_clause} GROUP BY year ORDER BY year").fetchall()
-    by_quartile = db.execute(f"SELECT quartile, COUNT(*) c FROM papers WHERE {quartile_clause} GROUP BY quartile").fetchall()
-    by_domain = db.execute(f"SELECT domain, COUNT(*) c FROM papers WHERE {domain_clause} GROUP BY domain ORDER BY c DESC").fetchall()
+    total = db.execute(f"SELECT COUNT(*) FROM papers WHERE scientist_id = ? {hidden_clause}", (sid,)).fetchone()[0]
+    by_year = db.execute(f"SELECT year, COUNT(*) c FROM papers WHERE scientist_id = ? AND {year_clause} GROUP BY year ORDER BY year", (sid,)).fetchall()
+    by_quartile = db.execute(f"SELECT quartile, COUNT(*) c FROM papers WHERE scientist_id = ? AND {quartile_clause} GROUP BY quartile", (sid,)).fetchall()
+    by_domain = db.execute(f"SELECT domain, COUNT(*) c FROM papers WHERE scientist_id = ? {hidden_clause} GROUP BY domain ORDER BY c DESC", (sid,)).fetchall()
     return jsonify({
         "total": total,
         "by_year": [dict(r) for r in by_year],
@@ -874,6 +979,7 @@ def add_paper():
     """
     data = request.get_json(force=True)
     db = get_db()
+    scientist_id = _get_scientist_id()
 
     if "bibtex" in data:
         if bibtexparser is None:
@@ -896,12 +1002,12 @@ def add_paper():
             field = classify_field(domains)
             cur = db.execute(
                 """INSERT INTO papers
-                (complete_reference, title, authors, author_position, year,
+                (scientist_id, complete_reference, title, authors, author_position, year,
                  journal, publisher, issn, doi, article_type, impact_factor,
                  quartile, domain, field, hidden, selected, abstract, keywords)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?)""",
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?)""",
                 (
-                    f"{authors} ({year}). {title}. {journal}.",
+                    scientist_id, f"{authors} ({year}). {title}. {journal}.",
                     title, authors, "", year, journal, publisher, issn, doi,
                     entry.get("ENTRYTYPE", "article"), "", "", domain, field, pre_selected, "", "",
                 ),
@@ -920,12 +1026,12 @@ def add_paper():
     field = data.get("field") or classify_field(domains)
     cur = db.execute(
         """INSERT INTO papers
-        (complete_reference, title, authors, author_position, year, journal,
+        (scientist_id, complete_reference, title, authors, author_position, year, journal,
          publisher, issn, doi, article_type, impact_factor, quartile, domain,
          field, hidden, selected, abstract, keywords)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?)""",
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?)""",
         (
-            data.get("complete_reference", ""), data.get("title", ""),
+            scientist_id, data.get("complete_reference", ""), data.get("title", ""),
             data.get("authors", ""), data.get("author_position", ""),
             data.get("year", ""), data.get("journal", ""),
             data.get("publisher", ""), data.get("issn", ""),
@@ -1102,15 +1208,133 @@ def delete_paper(pub_id):
     return jsonify({"message": "Paper deleted."})
 
 
+def _get_scientist_id():
+    """Reads scientist_id from the query string (GET) or JSON body (POST/PUT), default 1."""
+    val = request.args.get("scientist_id")
+    if val is None and request.is_json:
+        val = (request.get_json(silent=True) or {}).get("scientist_id")
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return 1
+
+
+@app.route("/api/scientists", methods=["GET"])
+def list_scientists():
+    """Lightweight list for the profile switcher — id, slug, name, designation, photo."""
+    db = get_db()
+    rows = db.execute("SELECT scientist_id, slug, name, designation, photo_filename FROM scientists ORDER BY scientist_id ASC").fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
 @app.route("/api/scientist", methods=["GET"])
 def scientist_info():
-    return jsonify(SCIENTIST_PROFILE)
+    scientist_id = _get_scientist_id()
+    db = get_db()
+    row = db.execute("SELECT * FROM scientists WHERE scientist_id = ?", (scientist_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "Scientist not found."}), 404
+    d = dict(row)
+    for key in ("mobile", "email", "education", "accolades", "employment", "other_records"):
+        d[key] = json.loads(d[key]) if d[key] else []
+    return jsonify(d)
+
+
+@app.route("/api/scientist", methods=["PUT"])
+@require_auth
+def update_scientist():
+    """Updates any subset of the active scientist's profile fields (Home tab content)."""
+    scientist_id = _get_scientist_id()
+    data = request.get_json(force=True)
+    db = get_db()
+
+    row = db.execute("SELECT scientist_id FROM scientists WHERE scientist_id = ?", (scientist_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "Scientist not found."}), 404
+
+    text_fields = ["name", "designation", "institute", "address", "dob", "research_interest", "scholar_url", "linkedin_url"]
+    json_fields = ["mobile", "email", "education", "accolades", "employment", "other_records"]
+
+    updates, params = [], []
+    for f in text_fields:
+        if f in data:
+            updates.append(f"{f} = ?")
+            params.append(data[f])
+    for f in json_fields:
+        if f in data:
+            updates.append(f"{f} = ?")
+            params.append(json.dumps(data[f]))
+
+    if not updates:
+        return jsonify({"error": "No fields to update."}), 400
+
+    params.append(scientist_id)
+    db.execute(f"UPDATE scientists SET {', '.join(updates)} WHERE scientist_id = ?", params)
+    db.commit()
+    return jsonify({"message": "Profile updated."})
+
+
+@app.route("/api/scientists", methods=["POST"])
+@require_auth
+def add_scientist():
+    """Creates a brand-new, entirely blank profile — no papers, awards, or any
+    other content — for a new person to fill in themselves via admin login."""
+    data = request.get_json(force=True)
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Name is required."}), 400
+
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "user"
+    db = get_db()
+    base_slug = slug
+    n = 1
+    while db.execute("SELECT 1 FROM scientists WHERE slug = ?", (slug,)).fetchone():
+        n += 1
+        slug = f"{base_slug}-{n}"
+
+    cur = db.execute(
+        """INSERT INTO scientists
+        (slug, name, designation, institute, address, dob, mobile, email,
+         research_interest, education, accolades, employment, other_records,
+         photo_filename, scholar_url, linkedin_url)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            slug, name, data.get("designation", ""), data.get("institute", ""), "", "",
+            "[]", "[]", "", "[]", "[]", "[]", "[]",
+            "yeasin-photo.png", "", "",
+        ),
+    )
+    db.commit()
+    return jsonify({"message": f"{name}'s profile created — blank and ready to fill in.", "scientist_id": cur.lastrowid}), 201
+
+
+@app.route("/api/scientist/photo", methods=["POST"])
+@require_auth
+def upload_scientist_photo():
+    """Accepts an image upload for the active scientist's profile photo."""
+    scientist_id = _get_scientist_id()
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded (expected form field 'file')."}), 400
+    file = request.files["file"]
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        return jsonify({"error": "Please upload a PNG, JPG, or WEBP image."}), 400
+
+    filename = f"scientist-{scientist_id}-photo{ext}"
+    save_path = os.path.join(FRONTEND_DIR, filename)
+    file.save(save_path)
+
+    db = get_db()
+    db.execute("UPDATE scientists SET photo_filename = ? WHERE scientist_id = ?", (filename, scientist_id))
+    db.commit()
+    return jsonify({"message": "Photo updated.", "photo_filename": filename})
 
 
 @app.route("/api/profile-layout", methods=["GET"])
 def get_profile_layout():
+    scientist_id = _get_scientist_id()
     db = get_db()
-    row = db.execute("SELECT config FROM profile_layout WHERE id = 1").fetchone()
+    row = db.execute("SELECT config FROM profile_layout WHERE scientist_id = ?", (scientist_id,)).fetchone()
     if row:
         return jsonify(json.loads(row["config"]))
     return jsonify({})
@@ -1119,58 +1343,105 @@ def get_profile_layout():
 @app.route("/api/profile-layout", methods=["PUT"])
 @require_auth
 def save_profile_layout():
+    scientist_id = _get_scientist_id()
     data = request.get_json(force=True)
+    data.pop("scientist_id", None)
     db = get_db()
     config_json = json.dumps(data)
     db.execute(
-        "INSERT INTO profile_layout (id, config) VALUES (1, ?) "
-        "ON CONFLICT(id) DO UPDATE SET config = excluded.config",
-        (config_json,),
+        "INSERT INTO profile_layout (scientist_id, config) VALUES (?, ?) "
+        "ON CONFLICT(scientist_id) DO UPDATE SET config = excluded.config",
+        (scientist_id, config_json),
     )
     db.commit()
     return jsonify({"message": "Layout saved."})
 
 
-SCIENTIST_PROFILE = {
-    "name": "Dr. Md Yeasin",
-    "designation": "Scientist",
-    "institute": "ICAR-Indian Agricultural Statistics Research Institute (IASRI)",
-    "address": "304, TAC Building, ICAR-IASRI, Library Avenue, New Delhi-110012",
-    "location": "New Delhi - 110012",
-    "dob": "27th January 1994",
-    "mobile": ["8926261427", "9136309898"],
-    "email": ["yeasin.iasri@gmail.com", "mdyeasin.iasri@icar.org.in"],
-    "research_interest": (
-        "I am a statistician, specialize in time series and machine learning "
-        "models for agriculture and allied sciences. My current research "
-        "focuses on modelling and forecasting temporal behaviour of the "
-        "environmental parameters and quantifying its effect on agricultural "
-        "productivity and sustainability."
-    ),
-    "education": [
-        {"degree": "Ph.D. in Agricultural Statistics", "year": "2021", "institution": "ICAR-Indian Agricultural Research Institute"},
-        {"degree": "M.Sc. in Agricultural Statistics", "year": "2017", "institution": "ICAR-Indian Agricultural Research Institute"},
-        {"degree": "Graduation in Agriculture", "year": "2015", "institution": "Visva-Bharati (A Central University)"},
-        {"degree": "Higher Secondary (12th)", "year": "2011", "institution": "West Bengal Council of Higher Secondary Education (from MPV)"},
-        {"degree": "Secondary (10th)", "year": "2009", "institution": "West Bengal Board of Secondary Education (from CHS)"},
-    ],
-    "accolades": [
-        "Successfully qualified UGC-NET 2017",
-        "Successfully qualified ICAR-NET 2017 and 2018",
-        "Successfully qualified IARI-SRF 2017 from ICAR, Government of India",
-        "Successfully qualified IARI-JRF 2015 from ICAR, Government of India",
-        "Got National Fellowship for OBC (NFOBC) 2018",
-        "Got Maulana Azad Fellowship Scheme (MANF) in 2018",
-    ],
-    "employment": [
-        {"period": "Jan 2021 - till date", "role": "Scientist (Agricultural Statistics)", "institution": "Indian Agricultural Statistics Research Institute (IASRI), New Delhi, India"},
-        {"period": "Oct 2020 - Jan 2021", "role": "Scientist (Agricultural Statistics)", "institution": "National Academy of Agricultural Research Management (NAARM), Hyderabad, India"},
-    ],
-    "other_records": [
-        "Selected in ISS (Indian Statistical Service)-UPSC in 2019.",
-        "Selected as Assistant Professor by West Bengal College Service Commission in 2018.",
-    ],
-}
+SCIENTISTS_SEED = [
+    {
+        "slug": "yeasin",
+        "name": "Dr. Md Yeasin",
+        "designation": "Scientist",
+        "institute": "ICAR-Indian Agricultural Statistics Research Institute (IASRI)",
+        "address": "304, TAC Building, ICAR-IASRI, Library Avenue, New Delhi-110012",
+        "dob": "27th January 1994",
+        "mobile": ["8926261427", "9136309898"],
+        "email": ["yeasin.iasri@gmail.com", "mdyeasin.iasri@icar.org.in"],
+        "research_interest": (
+            "I am a statistician, specialize in time series and machine learning "
+            "models for agriculture and allied sciences. My current research "
+            "focuses on modelling and forecasting temporal behaviour of the "
+            "environmental parameters and quantifying its effect on agricultural "
+            "productivity and sustainability."
+        ),
+        "education": [
+            {"degree": "Ph.D. in Agricultural Statistics", "year": "2021", "institution": "ICAR-Indian Agricultural Research Institute"},
+            {"degree": "M.Sc. in Agricultural Statistics", "year": "2017", "institution": "ICAR-Indian Agricultural Research Institute"},
+            {"degree": "Graduation in Agriculture", "year": "2015", "institution": "Visva-Bharati (A Central University)"},
+            {"degree": "Higher Secondary (12th)", "year": "2011", "institution": "West Bengal Council of Higher Secondary Education (from MPV)"},
+            {"degree": "Secondary (10th)", "year": "2009", "institution": "West Bengal Board of Secondary Education (from CHS)"},
+        ],
+        "accolades": [
+            "Successfully qualified UGC-NET 2017",
+            "Successfully qualified ICAR-NET 2017 and 2018",
+            "Successfully qualified IARI-SRF 2017 from ICAR, Government of India",
+            "Successfully qualified IARI-JRF 2015 from ICAR, Government of India",
+            "Got National Fellowship for OBC (NFOBC) 2018",
+            "Got Maulana Azad Fellowship Scheme (MANF) in 2018",
+        ],
+        "employment": [
+            {"period": "Jan 2021 - till date", "role": "Scientist (Agricultural Statistics)", "institution": "Indian Agricultural Statistics Research Institute (IASRI), New Delhi, India"},
+            {"period": "Oct 2020 - Jan 2021", "role": "Scientist (Agricultural Statistics)", "institution": "National Academy of Agricultural Research Management (NAARM), Hyderabad, India"},
+        ],
+        "other_records": [
+            "Selected in ISS (Indian Statistical Service)-UPSC in 2019.",
+            "Selected as Assistant Professor by West Bengal College Service Commission in 2018.",
+        ],
+        "photo_filename": "yeasin-photo.png",
+        "scholar_url": "https://scholar.google.com/citations?user=xejMKD0AAAAJ&hl=en&oi=sra",
+        "linkedin_url": "https://www.linkedin.com/in/dr-yeasin/",
+    },
+    {
+        "slug": "ranjit",
+        "name": "Dr. Ranjit Kumar Paul",
+        "designation": "ICAR NATIONAL FELLOW",
+        "institute": "ICAR-Indian Agricultural Statistics Research Institute (IASRI)",
+        "address": "Library Avenue, PUSA, New Delhi, India-110012",
+        "dob": "25th April 1982",
+        "mobile": ["+91-8287778896"],
+        "email": ["ranjitstat@gmail.com", "ranjit.paul@icar.gov.in"],
+        "research_interest": (
+            "I work on time series analysis and forecasting for agriculture, with "
+            "particular focus on nonlinear models (GARCH/EGARCH), wavelet-based and "
+            "hybrid machine learning methods, and their application to agricultural "
+            "price and yield forecasting, market integration, and climate variability."
+        ),
+        "education": [
+            {"degree": "Ph.D. in Agricultural Statistics", "year": "2009", "institution": "Indian Agricultural Statistics Research Institute (IASRI)"},
+            {"degree": "M.Sc. in Agricultural Statistics", "year": "2006", "institution": "Indian Agricultural Statistics Research Institute (IASRI)"},
+            {"degree": "B.Sc. in Agriculture", "year": "2004", "institution": "Uttar Banga Krishi Viswavidyalaya"},
+            {"degree": "Higher Secondary", "year": "2000", "institution": "West Bengal Council of Higher Secondary Education"},
+            {"degree": "Secondary", "year": "1998", "institution": "West Bengal Board of Secondary Education"},
+        ],
+        "accolades": [
+            "Fellow of National Academy of Agricultural Sciences (NAAS), since 2018",
+            "Fellow of Indian Society of Agricultural Statistics, since 2022",
+            "Fellow of Agricultural Economics Research Association, since 2025",
+            "ICAR Lal Bahadur Shastri Outstanding Young Scientist Award in Social Sciences, 2016",
+        ],
+        "employment": [
+            {"period": "May 2011 - till date", "role": "Scientist (Agricultural Statistics)", "institution": "Indian Agricultural Statistics Research Institute (IASRI), New Delhi, India"},
+            {"period": "Oct 2009 - Apr 2011", "role": "Scientist (Agricultural Statistics)", "institution": "Central Inland Fisheries Research Institute (CIFRI), Kolkata, India"},
+            {"period": "Jun 2009 - Oct 2009", "role": "Scientist (Agricultural Statistics)", "institution": "National Academy of Agricultural Research Management (NAARM), Hyderabad, India"},
+        ],
+        "other_records": [
+            "Previously served in the Indian Statistical Service, Central Statistical Organization, Ministry of Statistics and Programme Implementation, Government of India.",
+        ],
+        "photo_filename": "ranjit-photo.png",
+        "scholar_url": "https://scholar.google.com/citations?user=wBWuZJgAAAAJ&hl=en&oi=ao",
+        "linkedin_url": "https://www.linkedin.com/in/ranjit-kumar-paul-72b42320/",
+    },
+]
 
 
 # ---------------------------------------------------------------------------
@@ -1327,22 +1598,25 @@ def _register_simple_crud(endpoint_name, config):
 
     def list_items():
         db = get_db()
-        hidden_clause = "" if is_admin_request() else "WHERE hidden = 0"
-        rows = db.execute(f"SELECT * FROM {table} {hidden_clause} ORDER BY {order_by}").fetchall()
+        scientist_id = _get_scientist_id()
+        hidden_clause = "AND hidden = 0" if not is_admin_request() else ""
+        rows = db.execute(f"SELECT * FROM {table} WHERE scientist_id = ? {hidden_clause} ORDER BY {order_by}", (scientist_id,)).fetchall()
         return jsonify([dict(r) for r in rows])
 
     def add_item():
         data = request.get_json(force=True)
         db = get_db()
+        scientist_id = _get_scientist_id()
         if table == "software" and data.get("cran_url") and not data.get("package_name"):
             meta = _fetch_cran_metadata(data["cran_url"])
             if meta:
                 data["package_name"] = meta["package_name"]
                 data["reference"] = data.get("reference") or meta["reference"]
                 data["year"] = data.get("year") or meta["year"]
-        vals = [data.get(c, "") for c in columns]
-        placeholders = ",".join(["?"] * len(columns))
-        cur = db.execute(f"INSERT INTO {table} ({','.join(columns)}) VALUES ({placeholders})", vals)
+        vals = [data.get(c, "") for c in columns] + [scientist_id]
+        all_cols = columns + ["scientist_id"]
+        placeholders = ",".join(["?"] * len(all_cols))
+        cur = db.execute(f"INSERT INTO {table} ({','.join(all_cols)}) VALUES ({placeholders})", vals)
         db.commit()
         return jsonify({"message": "Added.", "id": cur.lastrowid}), 201
 
@@ -1904,7 +2178,7 @@ def reset_journal_scores():
 # styled PDF. Uses reportlab (pure Python, no system graphics libraries
 # required) so it works the same locally and on minimal hosts like Render.
 # ---------------------------------------------------------------------------
-def _build_cv_pdf():
+def _build_cv_pdf(scientist_id=1):
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.lib import colors
@@ -1913,6 +2187,14 @@ def _build_cv_pdf():
         SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, HRFlowable
     )
     import io
+
+    def esc(s):
+        """Escapes text for ReportLab's Paragraph markup parser — without this,
+        a literal '&' (e.g. 'Journal of X & Y') or '<'/'>' anywhere in real
+        bibliographic data breaks the parser with 'unclosed tags'."""
+        if s is None:
+            return ""
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     ink = colors.HexColor("#1C2B39")
     olive = colors.HexColor("#454F32")
@@ -1929,8 +2211,15 @@ def _build_cv_pdf():
 
     db = get_db()
 
+    sci_row = db.execute("SELECT * FROM scientists WHERE scientist_id = ?", (scientist_id,)).fetchone()
+    if not sci_row:
+        raise ValueError(f"No scientist with id {scientist_id}")
+    p = dict(sci_row)
+    for key in ("mobile", "email", "education", "accolades", "employment", "other_records"):
+        p[key] = json.loads(p[key]) if p[key] else []
+
     # ---- Read the saved Home-tab tick state (profile_layout.config) ----
-    layout_row = db.execute("SELECT config FROM profile_layout WHERE id = 1").fetchone()
+    layout_row = db.execute("SELECT config FROM profile_layout WHERE scientist_id = ?", (scientist_id,)).fetchone()
     layout = json.loads(layout_row["config"]) if layout_row else {}
     cv_blocks = layout.get("cv_blocks")  # None = not yet configured -> include everything
     cv_items = layout.get("cv_items", {})
@@ -1948,11 +2237,10 @@ def _build_cv_pdf():
         topMargin=18 * mm, bottomMargin=18 * mm, leftMargin=18 * mm, rightMargin=18 * mm,
     )
     story = []
-    p = SCIENTIST_PROFILE
 
     # ---- Header block (photo + name/role/address) ----
     if block_included("header"):
-        photo_path = os.path.join(FRONTEND_DIR, "yeasin-photo.png")
+        photo_path = os.path.join(FRONTEND_DIR, p.get("photo_filename") or "yeasin-photo.png")
         header_cells = []
         if os.path.exists(photo_path):
             try:
@@ -1963,9 +2251,9 @@ def _build_cv_pdf():
             header_cells.append("")
 
         info_flow = [
-            Paragraph(p["name"], name_style),
-            Paragraph(f"{p['designation']} &middot; {p['institute']}", role_style),
-            Paragraph(p.get("address", ""), small_style),
+            Paragraph(esc(p["name"]), name_style),
+            Paragraph(f"{esc(p['designation'])} &middot; {esc(p['institute'])}", role_style),
+            Paragraph(esc(p.get("address", "")), small_style),
         ]
         header_cells.append(info_flow)
 
@@ -1984,11 +2272,11 @@ def _build_cv_pdf():
     if block_included("contact"):
         contact_bits = []
         if p.get("dob"):
-            contact_bits.append(f"DOB: {p['dob']}")
+            contact_bits.append(f"DOB: {esc(p['dob'])}")
         if p.get("mobile"):
-            contact_bits.append("Mobile: " + " / ".join(p["mobile"]))
+            contact_bits.append("Mobile: " + esc(" / ".join(p["mobile"])))
         if p.get("email"):
-            contact_bits.append("Email: " + ", ".join(p["email"]))
+            contact_bits.append("Email: " + esc(", ".join(p["email"])))
         if contact_bits:
             story.append(Paragraph(" &nbsp;|&nbsp; ".join(contact_bits), small_style))
             story.append(Spacer(1, 6))
@@ -1996,7 +2284,7 @@ def _build_cv_pdf():
     # ---- Research interest block ----
     if block_included("research_interest") and p.get("research_interest"):
         story.append(Paragraph("Research Interest", h2_style))
-        story.append(Paragraph(p["research_interest"], body_style))
+        story.append(Paragraph(esc(p["research_interest"]), body_style))
 
     # ---- Education / Accolades / Employment / Other Records (per-item ticks) ----
     def list_block(block_id, title, data_items, render_fn):
@@ -2010,92 +2298,92 @@ def _build_cv_pdf():
             story.append(Paragraph(render_fn(item), body_style))
 
     list_block("education", "Education", p.get("education", []),
-               lambda e: f"<b>{e['degree']}</b> ({e['year']}) &middot; {e['institution']}")
+               lambda e: f"<b>{esc(e['degree'])}</b> ({esc(e['year'])}) &middot; {esc(e['institution'])}")
     list_block("accolades", "Academic Accolades", p.get("accolades", []),
-               lambda a: a)
+               lambda a: esc(a))
     list_block("employment", "Employment", p.get("employment", []),
-               lambda e: f"<b>{e['period']}</b> &middot; {e['role']}, {e['institution']}")
+               lambda e: f"<b>{esc(e['period'])}</b> &middot; {esc(e['role'])}, {esc(e['institution'])}")
     list_block("other_records", "Other Records", p.get("other_records", []),
-               lambda r: r)
+               lambda r: esc(r))
 
     def section_header(title):
         story.append(Paragraph(title, h2_style))
 
     # ---- Publications ----
-    rows = db.execute("SELECT * FROM papers WHERE cv_included = 1 ORDER BY year DESC").fetchall()
+    rows = db.execute("SELECT * FROM papers WHERE scientist_id = ? AND cv_included = 1 ORDER BY year DESC", (scientist_id,)).fetchall()
     if rows:
         section_header(f"Publications ({len(rows)})")
         for i, r in enumerate(rows, 1):
-            story.append(Paragraph(f"{i}. {r['complete_reference'] or r['title']}", body_style))
+            story.append(Paragraph(f"{i}. {esc(r['complete_reference'] or r['title'])}", body_style))
             tag_bits = []
             if r["quartile"]:
-                tag_bits.append(r["quartile"])
+                tag_bits.append(esc(r["quartile"]))
             if r["impact_factor"]:
-                tag_bits.append(f"IF {r['impact_factor']}")
+                tag_bits.append(f"IF {esc(r['impact_factor'])}")
             if r["naas_score"]:
-                tag_bits.append(f"NAAS {r['naas_score']}")
+                tag_bits.append(f"NAAS {esc(r['naas_score'])}")
             if tag_bits:
                 story.append(Paragraph(" &middot; ".join(tag_bits), meta_style))
 
     # ---- Awards ----
-    rows = db.execute("SELECT * FROM awards WHERE cv_included = 1 ORDER BY year DESC").fetchall()
+    rows = db.execute("SELECT * FROM awards WHERE scientist_id = ? AND cv_included = 1 ORDER BY year DESC", (scientist_id,)).fetchall()
     if rows:
         section_header(f"Awards ({len(rows)})")
         for r in rows:
-            story.append(Paragraph(r["title"], entry_title_style))
-            story.append(Paragraph(f"{r['awarding_body']} &middot; {r['year']}", meta_style))
+            story.append(Paragraph(esc(r["title"]), entry_title_style))
+            story.append(Paragraph(f"{esc(r['awarding_body'])} &middot; {esc(r['year'])}", meta_style))
 
     # ---- Projects ----
-    rows = db.execute("SELECT * FROM projects WHERE cv_included = 1 ORDER BY date_start DESC").fetchall()
+    rows = db.execute("SELECT * FROM projects WHERE scientist_id = ? AND cv_included = 1 ORDER BY date_start DESC", (scientist_id,)).fetchall()
     if rows:
         section_header(f"Projects ({len(rows)})")
         for r in rows:
-            story.append(Paragraph(r["project_title"], entry_title_style))
-            date_bit = f"Started {r['date_start']}" + (f" &middot; Ended {r['date_end']}" if r["date_end"] else "")
-            story.append(Paragraph(f"{r['funding_agency']} &middot; {date_bit} &middot; {r['status']}", meta_style))
+            story.append(Paragraph(esc(r["project_title"]), entry_title_style))
+            date_bit = f"Started {esc(r['date_start'])}" + (f" &middot; Ended {esc(r['date_end'])}" if r["date_end"] else "")
+            story.append(Paragraph(f"{esc(r['funding_agency'])} &middot; {date_bit} &middot; {esc(r['status'])}", meta_style))
 
     # ---- Book Chapters ----
-    rows = db.execute("SELECT * FROM book_chapters WHERE cv_included = 1 ORDER BY year DESC").fetchall()
+    rows = db.execute("SELECT * FROM book_chapters WHERE scientist_id = ? AND cv_included = 1 ORDER BY year DESC", (scientist_id,)).fetchall()
     if rows:
         section_header(f"Book Chapters ({len(rows)})")
         for r in rows:
-            story.append(Paragraph(r["title"], entry_title_style))
-            author_bit = r["authors"] + (f" &middot; Editor: {r['editor']}" if r["editor"] else "")
+            story.append(Paragraph(esc(r["title"]), entry_title_style))
+            author_bit = esc(r["authors"]) + (f" &middot; Editor: {esc(r['editor'])}" if r["editor"] else "")
             story.append(Paragraph(author_bit, body_style))
-            story.append(Paragraph(f"{r['book_title']} &middot; {r['publisher']} &middot; {r['year']}", meta_style))
+            story.append(Paragraph(f"{esc(r['book_title'])} &middot; {esc(r['publisher'])} &middot; {esc(r['year'])}", meta_style))
 
     # ---- Software / Packages ----
-    rows = db.execute("SELECT * FROM software WHERE cv_included = 1 ORDER BY year DESC").fetchall()
+    rows = db.execute("SELECT * FROM software WHERE scientist_id = ? AND cv_included = 1 ORDER BY year DESC", (scientist_id,)).fetchall()
     if rows:
         section_header(f"Software / Packages ({len(rows)})")
         for r in rows:
-            story.append(Paragraph(r["package_name"], entry_title_style))
-            story.append(Paragraph(f"{r['reference']}", meta_style))
+            story.append(Paragraph(esc(r["package_name"]), entry_title_style))
+            story.append(Paragraph(esc(r["reference"]), meta_style))
 
     # ---- Courses Taught ----
-    rows = db.execute("SELECT * FROM courses_taught WHERE cv_included = 1 ORDER BY course_id ASC").fetchall()
+    rows = db.execute("SELECT * FROM courses_taught WHERE scientist_id = ? AND cv_included = 1 ORDER BY course_id ASC", (scientist_id,)).fetchall()
     if rows:
         section_header(f"Courses Taught ({len(rows)})")
         for r in rows:
-            story.append(Paragraph(r["course_name"], body_style))
+            story.append(Paragraph(esc(r["course_name"]), body_style))
 
     # ---- Students Guided ----
-    rows = db.execute("SELECT * FROM students_guided WHERE cv_included = 1 ORDER BY start_date DESC").fetchall()
+    rows = db.execute("SELECT * FROM students_guided WHERE scientist_id = ? AND cv_included = 1 ORDER BY start_date DESC", (scientist_id,)).fetchall()
     if rows:
         section_header(f"Students Guided ({len(rows)})")
         for r in rows:
-            story.append(Paragraph(r["name"], entry_title_style))
-            date_bit = r["start_date"] + (f" &ndash; {r['end_date']}" if r["end_date"] else "")
+            story.append(Paragraph(esc(r["name"]), entry_title_style))
+            date_bit = esc(r["start_date"]) + (f" &ndash; {esc(r['end_date'])}" if r["end_date"] else "")
             story.append(Paragraph(date_bit, meta_style))
             if r["description"]:
-                story.append(Paragraph(r["description"], body_style))
+                story.append(Paragraph(esc(r["description"]), body_style))
 
     # ---- Technology / Patents ----
-    rows = db.execute("SELECT * FROM technology WHERE cv_included = 1 ORDER BY tech_id ASC").fetchall()
+    rows = db.execute("SELECT * FROM technology WHERE scientist_id = ? AND cv_included = 1 ORDER BY tech_id ASC", (scientist_id,)).fetchall()
     if rows:
         section_header(f"Technology / Patents ({len(rows)})")
         for r in rows:
-            story.append(Paragraph(f"{r['authors']} ({r['year']}). {r['title']}. [{r['category']} No. {r['id_number']}]", body_style))
+            story.append(Paragraph(f"{esc(r['authors'])} ({esc(r['year'])}). {esc(r['title'])}. [{esc(r['category'])} No. {esc(r['id_number'])}]", body_style))
 
     doc.build(story)
     buf.seek(0)
@@ -2113,15 +2401,20 @@ def download_cv():
     card; the Home profile blocks/items use the same tick mechanism, saved
     in profile_layout.
     """
+    scientist_id = _get_scientist_id()
     try:
-        pdf_buf = _build_cv_pdf()
+        pdf_buf = _build_cv_pdf(scientist_id)
     except Exception as e:
         return jsonify({"error": f"Could not generate the CV: {e}"}), 500
+
+    db = get_db()
+    sci = db.execute("SELECT name FROM scientists WHERE scientist_id = ?", (scientist_id,)).fetchone()
+    filename = (sci["name"].replace(" ", "_").replace(".", "") if sci else "CV") + "_CV.pdf"
 
     from flask import send_file
     return send_file(
         pdf_buf, mimetype="application/pdf", as_attachment=True,
-        download_name="Md_Yeasin_CV.pdf",
+        download_name=filename,
     )
 
 

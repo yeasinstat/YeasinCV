@@ -1,0 +1,11 @@
+[
+  {"name": "Ms Priyanka Anoy", "student_type": "M.Sc.", "start_date": "2014", "end_date": "2016", "description": "M.Sc. (Ag. Stat)"},
+  {"name": "Mr Dipankar Mitra", "student_type": "M.Sc.", "start_date": "2015", "end_date": "2017", "description": "M.Sc. (Ag. Stat)"},
+  {"name": "Mr. Sandipan Sarkar", "student_type": "M.Sc.", "start_date": "2016", "end_date": "2018", "description": "M.Sc. (Ag. Stat)"},
+  {"name": "Mr. Sandip Garai", "student_type": "M.Sc.", "start_date": "2018", "end_date": "2020", "description": "M.Sc. (Ag. Stat)"},
+  {"name": "Mr. Subhradip Roy", "student_type": "M.Sc.", "start_date": "2021", "end_date": "", "description": "M.Sc. (Ag. Stat), continuing"},
+  {"name": "Mr. Debopam Rakshit", "student_type": "PhD", "start_date": "", "end_date": "", "description": "Ph.D. (Ag. Stat), Completed"},
+  {"name": "Mr. Sandip Garai", "student_type": "PhD", "start_date": "", "end_date": "", "description": "Ph.D. (Ag. Stat), Completed"},
+  {"name": "Ms Tamilselvi C", "student_type": "PhD", "start_date": "2021", "end_date": "", "description": "Ph.D. (Ag. Stat), continuing"},
+  {"name": "Mr. Ankit", "student_type": "PhD", "start_date": "2022", "end_date": "", "description": "Ph.D. (Ag. Stat), continuing"}
+]
