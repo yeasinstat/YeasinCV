@@ -21,6 +21,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
     <button class="btn-ghost hidden" id="addUserBtn">+ Add User</button>
     <button class="btn-ghost hidden" id="manageLoginBtn">Manage Login</button>
     <button class="btn-ghost hidden" id="deleteUserBtn">Delete User</button>
+    <button class="btn-ghost hidden" id="addNavTabBtn">+ Add Navigation Tab</button>
     <div class="scientist-text">
       <div class="scientist-name">Dr. Md Yeasin</div>
       <div class="scientist-role">Scientist &middot; ICAR-IASRI, New Delhi</div>
@@ -527,6 +528,38 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
     <button type="button" class="btn-secondary" id="manageLoginRemove">Remove Login</button>
     <p class="modal-error" id="manageLoginError"></p>
     <p class="modal-success" id="manageLoginSuccess"></p>
+  </div>
+</div>
+
+<!-- Add Navigation Tab modal -->
+<div class="modal-backdrop" id="addNavTabModalBackdrop">
+  <div class="modal modal-wide">
+    <button class="modal-close" data-close="addNavTabModalBackdrop">&times;</button>
+    <h2>Add Navigation Tab</h2>
+    <label for="navTabName">Tab Name</label>
+    <input id="navTabName" placeholder="e.g. Media Coverage">
+    <label>Sub-tabs (optional)</label>
+    <p class="modal-hint">Leave this empty for a single simple list. Add sub-tabs if this tab should be split into sections, like Other Publications is.</p>
+    <div id="navSubtabRows"></div>
+    <button type="button" class="btn-secondary" id="navSubtabAddRow">+ Add Sub-tab</button>
+    <button class="btn-primary" id="addNavTabSubmit">Create Tab</button>
+    <p class="modal-error" id="addNavTabError"></p>
+  </div>
+</div>
+
+<!-- Custom Entry modal (Add/Edit) -->
+<div class="modal-backdrop" id="customEntryModalBackdrop">
+  <div class="modal">
+    <button class="modal-close" data-close="customEntryModalBackdrop">&times;</button>
+    <h2 id="customEntryModalTitle">Add Entry</h2>
+    <label for="ceTitle">Title</label>
+    <input id="ceTitle" placeholder="e.g. Title of the entry">
+    <label for="ceYear">Year (optional)</label>
+    <input id="ceYear" placeholder="e.g. 2026">
+    <label for="ceDescription">Description (optional)</label>
+    <textarea id="ceDescription" rows="4"></textarea>
+    <button class="btn-primary" id="customEntrySubmit">Save</button>
+    <p class="modal-error" id="customEntryError"></p>
   </div>
 </div>
 

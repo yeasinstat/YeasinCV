@@ -329,6 +329,37 @@ CREATE TABLE IF NOT EXISTS research_team (
     created_at    TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS custom_tabs (
+    tab_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER DEFAULT 1,
+    name         TEXT,
+    slug         TEXT,
+    sort_order   INTEGER DEFAULT 0,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS custom_subtabs (
+    subtab_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    tab_id     INTEGER,
+    name       TEXT,
+    slug       TEXT,
+    sort_order INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS custom_entries (
+    entry_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    tab_id       INTEGER,
+    subtab_id    INTEGER,
+    scientist_id INTEGER DEFAULT 1,
+    title        TEXT,
+    year         TEXT DEFAULT '',
+    description  TEXT DEFAULT '',
+    sort_order   INTEGER DEFAULT 0,
+    hidden       INTEGER DEFAULT 0,
+    cv_included  INTEGER DEFAULT 1,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS journal_scores (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     journal_name   TEXT UNIQUE,
@@ -1765,6 +1796,195 @@ def upload_research_team_photo(member_id):
     return jsonify({"message": "Photo updated.", "photo_filename": filename})
 
 
+# ---------------------------------------------------------------------------
+# Custom Tabs — lets a logged-in profile owner (or the super admin) create
+# entirely new navigation tabs of their own, each optionally split into
+# sub-tabs, each holding simple Title/Year/Description entries. This is the
+# one part of the site with no fixed schema — everything else (Awards,
+# Projects, etc.) has dedicated tables; here, one flexible set of tables
+# handles any number of user-defined tabs safely, with no dynamic SQL DDL.
+# ---------------------------------------------------------------------------
+
+def _slugify(name):
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return slug or "tab"
+
+
+@app.route("/api/custom-tabs", methods=["GET"])
+def list_custom_tabs():
+    """Returns each custom tab with its sub-tabs (if any), for the nav bar."""
+    scientist_id = _get_scientist_id()
+    db = get_db()
+    tabs = db.execute(
+        "SELECT * FROM custom_tabs WHERE scientist_id = ? ORDER BY sort_order ASC, tab_id ASC", (scientist_id,)
+    ).fetchall()
+    result = []
+    for t in tabs:
+        subtabs = db.execute(
+            "SELECT * FROM custom_subtabs WHERE tab_id = ? ORDER BY sort_order ASC, subtab_id ASC", (t["tab_id"],)
+        ).fetchall()
+        d = dict(t)
+        d["subtabs"] = [dict(s) for s in subtabs]
+        result.append(d)
+    return jsonify(result)
+
+
+@app.route("/api/custom-tabs", methods=["POST"])
+@require_auth
+def add_custom_tab():
+    """Body: {"name": "...", "subtabs": ["Sub A", "Sub B"]} — subtabs is optional/empty."""
+    scientist_id = _get_scientist_id()
+    _enforce_scientist_scope(scientist_id)
+    data = request.get_json(force=True)
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Tab name is required."}), 400
+    subtab_names = [s.strip() for s in data.get("subtabs", []) if s and s.strip()]
+
+    db = get_db()
+    max_order = db.execute("SELECT COALESCE(MAX(sort_order), -1) FROM custom_tabs WHERE scientist_id = ?", (scientist_id,)).fetchone()[0]
+    cur = db.execute(
+        "INSERT INTO custom_tabs (scientist_id, name, slug, sort_order) VALUES (?,?,?,?)",
+        (scientist_id, name, _slugify(name), max_order + 1),
+    )
+    tab_id = cur.lastrowid
+    for i, sname in enumerate(subtab_names):
+        db.execute(
+            "INSERT INTO custom_subtabs (tab_id, name, slug, sort_order) VALUES (?,?,?,?)",
+            (tab_id, sname, _slugify(sname), i),
+        )
+    db.commit()
+    return jsonify({"message": f"'{name}' tab created.", "tab_id": tab_id}), 201
+
+
+@app.route("/api/custom-tabs/<int:tab_id>", methods=["DELETE"])
+@require_auth
+def delete_custom_tab(tab_id):
+    db = get_db()
+    owner = db.execute("SELECT scientist_id, name FROM custom_tabs WHERE tab_id = ?", (tab_id,)).fetchone()
+    if not owner:
+        return jsonify({"error": "Not found."}), 404
+    _enforce_scientist_scope(owner["scientist_id"])
+    db.execute("DELETE FROM custom_entries WHERE tab_id = ?", (tab_id,))
+    db.execute("DELETE FROM custom_subtabs WHERE tab_id = ?", (tab_id,))
+    db.execute("DELETE FROM custom_tabs WHERE tab_id = ?", (tab_id,))
+    db.commit()
+    return jsonify({"message": f"'{owner['name']}' tab deleted."})
+
+
+@app.route("/api/custom-entries", methods=["GET"])
+def list_custom_entries():
+    """Query params: tab_id (required), subtab_id (optional — omit for tabs with no sub-tabs)."""
+    tab_id = request.args.get("tab_id", type=int)
+    subtab_id = request.args.get("subtab_id", type=int)
+    if not tab_id:
+        return jsonify({"error": "tab_id is required."}), 400
+    db = get_db()
+    hidden_clause = "" if is_admin_request() else "AND hidden = 0"
+    if subtab_id:
+        rows = db.execute(
+            f"SELECT * FROM custom_entries WHERE tab_id = ? AND subtab_id = ? {hidden_clause} ORDER BY sort_order ASC, entry_id ASC",
+            (tab_id, subtab_id),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            f"SELECT * FROM custom_entries WHERE tab_id = ? AND subtab_id IS NULL {hidden_clause} ORDER BY sort_order ASC, entry_id ASC",
+            (tab_id,),
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/custom-entries", methods=["POST"])
+@require_auth
+def add_custom_entry():
+    data = request.get_json(force=True)
+    tab_id = data.get("tab_id")
+    subtab_id = data.get("subtab_id") or None
+    title = (data.get("title") or "").strip()
+    if not tab_id or not title:
+        return jsonify({"error": "tab_id and title are required."}), 400
+
+    db = get_db()
+    tab = db.execute("SELECT scientist_id FROM custom_tabs WHERE tab_id = ?", (tab_id,)).fetchone()
+    if not tab:
+        return jsonify({"error": "Tab not found."}), 404
+    _enforce_scientist_scope(tab["scientist_id"])
+
+    max_order = db.execute(
+        "SELECT COALESCE(MAX(sort_order), -1) FROM custom_entries WHERE tab_id = ? AND (subtab_id = ? OR (subtab_id IS NULL AND ? IS NULL))",
+        (tab_id, subtab_id, subtab_id),
+    ).fetchone()[0]
+    cur = db.execute(
+        "INSERT INTO custom_entries (tab_id, subtab_id, scientist_id, title, year, description, sort_order) VALUES (?,?,?,?,?,?,?)",
+        (tab_id, subtab_id, tab["scientist_id"], title, data.get("year", ""), data.get("description", ""), max_order + 1),
+    )
+    db.commit()
+    return jsonify({"message": "Added.", "id": cur.lastrowid}), 201
+
+
+@app.route("/api/custom-entries/<int:entry_id>", methods=["PUT"])
+@require_auth
+def update_custom_entry(entry_id):
+    db = get_db()
+    owner = db.execute("SELECT scientist_id FROM custom_entries WHERE entry_id = ?", (entry_id,)).fetchone()
+    if not owner:
+        return jsonify({"error": "Not found."}), 404
+    _enforce_scientist_scope(owner["scientist_id"])
+    data = request.get_json(force=True)
+    updates, params = [], []
+    for f in ("title", "year", "description"):
+        if f in data:
+            updates.append(f"{f} = ?")
+            params.append(data[f])
+    if not updates:
+        return jsonify({"error": "No fields to update."}), 400
+    params.append(entry_id)
+    db.execute(f"UPDATE custom_entries SET {', '.join(updates)} WHERE entry_id = ?", params)
+    db.commit()
+    return jsonify({"message": "Updated."})
+
+
+@app.route("/api/custom-entries/<int:entry_id>", methods=["DELETE"])
+@require_auth
+def delete_custom_entry(entry_id):
+    db = get_db()
+    owner = db.execute("SELECT scientist_id FROM custom_entries WHERE entry_id = ?", (entry_id,)).fetchone()
+    if not owner:
+        return jsonify({"error": "Not found."}), 404
+    _enforce_scientist_scope(owner["scientist_id"])
+    db.execute("DELETE FROM custom_entries WHERE entry_id = ?", (entry_id,))
+    db.commit()
+    return jsonify({"message": "Deleted."})
+
+
+@app.route("/api/custom-entries/<int:entry_id>/toggle-hidden", methods=["POST"])
+@require_auth
+def toggle_custom_entry_hidden(entry_id):
+    db = get_db()
+    row = db.execute("SELECT hidden, scientist_id FROM custom_entries WHERE entry_id = ?", (entry_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "Not found."}), 404
+    _enforce_scientist_scope(row["scientist_id"])
+    new_val = 0 if row["hidden"] else 1
+    db.execute("UPDATE custom_entries SET hidden = ? WHERE entry_id = ?", (new_val, entry_id))
+    db.commit()
+    return jsonify({"message": "Hidden." if new_val else "Visible again.", "hidden": bool(new_val)})
+
+
+@app.route("/api/custom-entries/<int:entry_id>/toggle-cv-included", methods=["POST"])
+@require_auth
+def toggle_custom_entry_cv(entry_id):
+    db = get_db()
+    row = db.execute("SELECT cv_included, scientist_id FROM custom_entries WHERE entry_id = ?", (entry_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "Not found."}), 404
+    _enforce_scientist_scope(row["scientist_id"])
+    new_val = 0 if row["cv_included"] else 1
+    db.execute("UPDATE custom_entries SET cv_included = ? WHERE entry_id = ?", (new_val, entry_id))
+    db.commit()
+    return jsonify({"message": "Added to CV." if new_val else "Removed from CV.", "cv_included": bool(new_val)})
+
+
 @app.route("/api/profile-layout", methods=["GET"])
 def get_profile_layout():
     scientist_id = _get_scientist_id()
@@ -2962,6 +3182,43 @@ def _build_cv_pdf(scientist_id=1):
         section_header(f"Invited Talks ({len(rows)})")
         for r in rows:
             story.append(Paragraph(esc(r["description"]), unicode_body_style))
+
+    # ---- Custom (user-created) tabs ----
+    custom_tabs = db.execute("SELECT * FROM custom_tabs WHERE scientist_id = ? ORDER BY sort_order ASC", (scientist_id,)).fetchall()
+    for tab in custom_tabs:
+        subtabs = db.execute("SELECT * FROM custom_subtabs WHERE tab_id = ? ORDER BY sort_order ASC", (tab["tab_id"],)).fetchall()
+
+        def entry_line(r):
+            bits = esc(r["title"])
+            if r["year"]:
+                bits += f" ({esc(r['year'])})"
+            if r["description"]:
+                bits += f". {esc(r['description'])}"
+            return bits
+
+        if subtabs:
+            any_rows = False
+            group_story = []
+            for sub in subtabs:
+                rows = db.execute(
+                    "SELECT * FROM custom_entries WHERE subtab_id = ? AND cv_included = 1 ORDER BY sort_order ASC", (sub["subtab_id"],)
+                ).fetchall()
+                if rows:
+                    any_rows = True
+                    group_story.append(Paragraph(f"<b>{esc(sub['name'])}</b>", entry_title_style))
+                    for r in rows:
+                        group_story.append(Paragraph(entry_line(r), unicode_body_style))
+            if any_rows:
+                section_header(tab["name"])
+                story.extend(group_story)
+        else:
+            rows = db.execute(
+                "SELECT * FROM custom_entries WHERE tab_id = ? AND subtab_id IS NULL AND cv_included = 1 ORDER BY sort_order ASC", (tab["tab_id"],)
+            ).fetchall()
+            if rows:
+                section_header(f"{tab['name']} ({len(rows)})")
+                for r in rows:
+                    story.append(Paragraph(entry_line(r), unicode_body_style))
 
     doc.build(story)
     buf.seek(0)

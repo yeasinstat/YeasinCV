@@ -632,15 +632,16 @@ $("deleteUserBtn").addEventListener("click", async () => {
 });
 
 // ---------------- section nav ----------------
-document.querySelectorAll(".nav-tab").forEach(tab => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll(".nav-tab").forEach(t => t.classList.remove("active"));
-    tab.classList.add("active");
-    document.querySelectorAll(".section-panel").forEach(p => p.classList.add("hidden"));
-    currentSection = tab.dataset.section;
-    $("section-" + currentSection).classList.remove("hidden");
-    loadSection(currentSection);
-  });
+$("sectionNav").addEventListener("click", (e) => {
+  const tab = e.target.closest(".nav-tab");
+  if (!tab) return;
+  document.querySelectorAll(".nav-tab").forEach(t => t.classList.remove("active"));
+  tab.classList.add("active");
+  document.querySelectorAll(".section-panel").forEach(p => p.classList.add("hidden"));
+  currentSection = tab.dataset.section;
+  const panel = $("section-" + currentSection);
+  if (panel) panel.classList.remove("hidden");
+  loadSection(currentSection);
 });
 
 function loadSection(section) {
@@ -648,6 +649,7 @@ function loadSection(section) {
   if (section === "personal-details") { renderProfileBlocks("personalDetailsBlocks", PERSONAL_BLOCK_ORDER); return; }
   if (section === "book-chapters") { loadOtherPublications(); return; }
   if (section === "training") { loadTraining(); return; }
+  if (section.startsWith("custom-")) { loadCustomTabSection(section.replace("custom-", "")); return; }
   const map = {
     "awards": { endpoint: "/awards", render: renderAwards, container: "awardsList" },
     "projects": { endpoint: "/projects", render: renderProjects, container: "projectsList" },
@@ -662,6 +664,237 @@ function loadSection(section) {
     $(cfg.container).innerHTML = `<div class="empty-state">Could not load this section.</div>`;
   });
 }
+
+// ---------------- Custom (user-created) navigation tabs ----------------
+let customTabsData = [];
+
+async function loadCustomTabs() {
+  try {
+    customTabsData = await api("/custom-tabs");
+  } catch (e) {
+    customTabsData = [];
+  }
+  // remove any previously-injected custom nav buttons/panels (e.g. after switching profile)
+  document.querySelectorAll('.nav-tab[data-custom-tab]').forEach(el => el.remove());
+  document.querySelectorAll('.section-panel[data-custom-tab]').forEach(el => el.remove());
+
+  customTabsData.forEach(tab => {
+    const btn = document.createElement("button");
+    btn.className = "nav-tab";
+    btn.dataset.section = `custom-${tab.tab_id}`;
+    btn.dataset.customTab = "1";
+    btn.textContent = tab.name;
+    $("sectionNav").appendChild(btn);
+
+    const panel = document.createElement("section");
+    panel.className = "section-panel hidden";
+    panel.id = `section-custom-${tab.tab_id}`;
+    panel.dataset.customTab = "1";
+    panel.innerHTML = renderCustomTabPanelHtml(tab);
+    document.querySelector("main").appendChild(panel);
+  });
+
+  document.querySelectorAll('.section-panel[data-custom-tab] .add-record-btn, .delete-tab-btn').forEach(b => b.classList.toggle("hidden", !authToken));
+}
+
+function renderCustomTabPanelHtml(tab) {
+  const deleteBtn = `<button class="btn-ghost hidden delete-tab-btn" data-delete-tab="${tab.tab_id}" style="border-color:#B3413F; color:#B3413F;">Delete This Tab</button>`;
+  if (tab.subtabs && tab.subtabs.length) {
+    const subtabButtons = tab.subtabs.map((s, i) =>
+      `<button class="pub-subtab${i === 0 ? " active" : ""}" data-custom-subtab="${s.subtab_id}">${escapeHtml(s.name)}</button>`
+    ).join("");
+    const subtabPanels = tab.subtabs.map((s, i) => `
+      <div class="other-pub-panel${i === 0 ? "" : " hidden"}" data-custom-subtab-panel="${s.subtab_id}">
+        <div class="section-header">
+          <span></span>
+          <button class="btn-ghost hidden add-record-btn" data-custom-add-entry data-tab-id="${tab.tab_id}" data-subtab-id="${s.subtab_id}">+ Add Entry</button>
+        </div>
+        <div class="record-list" id="customEntries-${tab.tab_id}-${s.subtab_id}"></div>
+      </div>
+    `).join("");
+    return `
+      <div class="section-header">
+        <div class="section-heading-group"><h2>${escapeHtml(tab.name)}</h2></div>
+        ${deleteBtn}
+      </div>
+      <div class="pub-subtabs" data-custom-tab-subtabs="${tab.tab_id}">${subtabButtons}</div>
+      ${subtabPanels}
+    `;
+  }
+  return `
+    <div class="section-header">
+      <div class="section-heading-group"><h2>${escapeHtml(tab.name)}</h2></div>
+      <div style="display:flex; gap:8px;">
+        ${deleteBtn}
+        <button class="btn-ghost hidden add-record-btn" data-custom-add-entry data-tab-id="${tab.tab_id}">+ Add Entry</button>
+      </div>
+    </div>
+    <div class="record-list" id="customEntries-${tab.tab_id}"></div>
+  `;
+}
+
+function loadCustomTabSection(tabId) {
+  const tab = customTabsData.find(t => t.tab_id === parseInt(tabId));
+  if (!tab) return;
+  if (tab.subtabs && tab.subtabs.length) {
+    tab.subtabs.forEach(s => loadCustomEntries(tab.tab_id, s.subtab_id));
+  } else {
+    loadCustomEntries(tab.tab_id, null);
+  }
+}
+
+async function loadCustomEntries(tabId, subtabId) {
+  const containerId = subtabId ? `customEntries-${tabId}-${subtabId}` : `customEntries-${tabId}`;
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  try {
+    const qs = subtabId ? `?tab_id=${tabId}&subtab_id=${subtabId}` : `?tab_id=${tabId}`;
+    const items = await api(`/custom-entries${qs}`);
+    renderCustomEntries(container, tabId, subtabId, items);
+  } catch (e) {
+    container.innerHTML = `<div class="empty-state">Could not load this section.</div>`;
+  }
+}
+
+function renderCustomEntries(container, tabId, subtabId, items) {
+  container.innerHTML = items.length ? items.map(it => `
+    <div class="record-entry" data-id="${it.entry_id}">
+      <div class="record-main">
+        <h3 class="record-title">${escapeHtml(it.title)}</h3>
+        <div class="record-meta">${it.year ? escapeHtml(it.year) + " &middot; " : ""}${escapeHtml(it.description || "")} ${recordTagsHtml(it)}</div>
+      </div>
+      <div class="record-actions admin-actions ${authToken ? "visible" : ""}">
+        <label class="cv-tick" title="Include in CV">
+          <input type="checkbox" data-custom-cv="${it.entry_id}" ${it.cv_included ? "checked" : ""}>
+        </label>
+        <button class="icon-btn" data-custom-edit="${it.entry_id}">Edit</button>
+        <button class="icon-btn" data-custom-toggle-hidden="${it.entry_id}">${it.hidden ? "Show" : "Hide"}</button>
+        <button class="icon-btn danger" data-custom-delete="${it.entry_id}">Delete</button>
+      </div>
+    </div>
+  `).join("") : `<div class="empty-state">No entries added yet.</div>`;
+
+  container.querySelectorAll("[data-custom-edit]").forEach(btn => {
+    btn.addEventListener("click", () => openCustomEntryModal(tabId, subtabId, parseInt(btn.dataset.customEdit)));
+  });
+  container.querySelectorAll("[data-custom-delete]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Delete this entry?")) return;
+      try {
+        await api(`/custom-entries/${btn.dataset.customDelete}`, { method: "DELETE" });
+        loadCustomEntries(tabId, subtabId);
+      } catch (e) { alert(e.message); }
+    });
+  });
+  container.querySelectorAll("[data-custom-toggle-hidden]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      try {
+        await api(`/custom-entries/${btn.dataset.customToggleHidden}/toggle-hidden`, { method: "POST" });
+        loadCustomEntries(tabId, subtabId);
+      } catch (e) { alert(e.message); }
+    });
+  });
+  container.querySelectorAll("[data-custom-cv]").forEach(cb => {
+    cb.addEventListener("change", async () => {
+      try {
+        await api(`/custom-entries/${cb.dataset.customCv}/toggle-cv-included`, { method: "POST" });
+      } catch (e) { alert(e.message); }
+    });
+  });
+}
+
+let editingCustomEntry = null; // { tabId, subtabId, entryId }
+function openCustomEntryModal(tabId, subtabId, entryId) {
+  editingCustomEntry = { tabId, subtabId, entryId };
+  $("customEntryError").textContent = "";
+  $("customEntryModalTitle").textContent = entryId ? "Edit Entry" : "Add Entry";
+  $("ceTitle").value = ""; $("ceYear").value = ""; $("ceDescription").value = "";
+  if (entryId) {
+    const containerId = subtabId ? `customEntries-${tabId}-${subtabId}` : `customEntries-${tabId}`;
+    const card = document.querySelector(`#${CSS.escape(containerId)} [data-id="${entryId}"]`);
+    if (card) {
+      $("ceTitle").value = card.querySelector(".record-title").textContent;
+    }
+  }
+  openModal("customEntryModalBackdrop");
+}
+
+$("customEntrySubmit").addEventListener("click", async () => {
+  $("customEntryError").textContent = "";
+  const { tabId, subtabId, entryId } = editingCustomEntry;
+  const payload = { title: $("ceTitle").value, year: $("ceYear").value, description: $("ceDescription").value };
+  try {
+    if (entryId) {
+      await api(`/custom-entries/${entryId}`, { method: "PUT", body: JSON.stringify(payload) });
+    } else {
+      payload.tab_id = tabId; payload.subtab_id = subtabId;
+      await api("/custom-entries", { method: "POST", body: JSON.stringify(payload) });
+    }
+    closeModal("customEntryModalBackdrop");
+    loadCustomEntries(tabId, subtabId);
+  } catch (e) {
+    $("customEntryError").textContent = e.message;
+  }
+});
+
+// Delegated handlers for dynamically-created custom tab controls
+document.querySelector("main").addEventListener("click", (e) => {
+  const addBtn = e.target.closest("[data-custom-add-entry]");
+  if (addBtn) {
+    openCustomEntryModal(parseInt(addBtn.dataset.tabId), addBtn.dataset.subtabId ? parseInt(addBtn.dataset.subtabId) : null, null);
+    return;
+  }
+  const delBtn = e.target.closest("[data-delete-tab]");
+  if (delBtn) {
+    const tab = customTabsData.find(t => t.tab_id === parseInt(delBtn.dataset.deleteTab));
+    if (!confirm(`Delete the entire "${tab ? tab.name : "this"}" tab, including all its entries? This cannot be undone.`)) return;
+    api(`/custom-tabs/${delBtn.dataset.deleteTab}`, { method: "DELETE" }).then(res => {
+      alert(res.message);
+      $(".nav-tab.active") && document.querySelector('.nav-tab[data-section="home"]').click();
+      loadCustomTabs();
+    }).catch(err => alert(err.message));
+    return;
+  }
+  const subtabBtn = e.target.closest("[data-custom-subtab]");
+  if (subtabBtn) {
+    const wrapper = subtabBtn.closest("[data-custom-tab-subtabs]");
+    wrapper.querySelectorAll(".pub-subtab").forEach(t => t.classList.remove("active"));
+    subtabBtn.classList.add("active");
+    const subId = subtabBtn.dataset.customSubtab;
+    const panelGroup = wrapper.parentElement;
+    panelGroup.querySelectorAll("[data-custom-subtab-panel]").forEach(p => {
+      p.classList.toggle("hidden", p.dataset.customSubtabPanel !== subId);
+    });
+  }
+});
+
+$("addNavTabBtn").addEventListener("click", () => {
+  $("addNavTabError").textContent = "";
+  $("navTabName").value = "";
+  $("navSubtabRows").innerHTML = "";
+  openModal("addNavTabModalBackdrop");
+});
+
+$("navSubtabAddRow").addEventListener("click", () => {
+  const row = document.createElement("div");
+  row.className = "edit-list-row";
+  row.innerHTML = `<input placeholder="Sub-tab name" class="nav-subtab-input"><button type="button" class="icon-btn danger edit-list-remove">Remove</button>`;
+  row.querySelector(".edit-list-remove").addEventListener("click", () => row.remove());
+  $("navSubtabRows").appendChild(row);
+});
+
+$("addNavTabSubmit").addEventListener("click", async () => {
+  $("addNavTabError").textContent = "";
+  const subtabs = [...document.querySelectorAll(".nav-subtab-input")].map(i => i.value.trim()).filter(Boolean);
+  try {
+    const res = await api("/custom-tabs", { method: "POST", body: JSON.stringify({ name: $("navTabName").value, subtabs }) });
+    closeModal("addNavTabModalBackdrop");
+    await loadCustomTabs();
+    alert(res.message);
+  } catch (e) {
+    $("addNavTabError").textContent = e.message;
+  }
+});
 
 function loadOtherPublications() {
   const parts = [
@@ -1023,7 +1256,9 @@ function onAuthChange() {
   $("enrichAllBtn").classList.toggle("hidden", !visible);
   $("updateDownloadsBtn").classList.toggle("hidden", !visible);
   $("downloadCvBtn").classList.toggle("hidden", !visible);
+  $("addNavTabBtn").classList.toggle("hidden", !visible);
   document.querySelectorAll(".add-record-btn").forEach(b => b.classList.toggle("hidden", !visible));
+  document.querySelectorAll(".delete-tab-btn").forEach(b => b.classList.toggle("hidden", !visible));
   document.querySelectorAll(".section-header-tick").forEach(b => b.classList.toggle("hidden", !visible));
 
   // Super-admin only — site-wide tools that touch more than one profile's data
@@ -1871,6 +2106,7 @@ $("scientistSwitcher").addEventListener("change", async (e) => {
 
 async function reloadForScientist() {
   await loadProfile();
+  await loadCustomTabs();
   await loadFilterOptions();
   await loadStats();
   if (currentSection === "publications") {
@@ -1884,6 +2120,7 @@ async function reloadForScientist() {
 (async function init() {
   await loadScientistSwitcher();
   await loadProfile();
+  await loadCustomTabs();
   await loadFilterOptions();
   await loadStats();
   await loadPapers();
