@@ -20,6 +20,10 @@ import string
 import time
 import threading
 import uuid
+import html as html_lib
+import urllib.request
+import urllib.parse
+import urllib.error
 from functools import wraps
 
 from flask import Flask, request, jsonify, g, send_from_directory
@@ -358,6 +362,38 @@ CREATE TABLE IF NOT EXISTS custom_entries (
     hidden       INTEGER DEFAULT 0,
     cv_included  INTEGER DEFAULT 1,
     created_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS proof_files (
+    proof_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER,
+    record_type  TEXT,
+    record_id    INTEGER,
+    file_name    TEXT,
+    mime_type    TEXT DEFAULT '',
+    size_bytes   INTEGER DEFAULT 0,
+    storage      TEXT,             -- 'drive' or 'local'
+    storage_ref  TEXT,             -- Drive file id, or path under backend/uploads/
+    web_link     TEXT DEFAULT '',
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS gallery_photos (
+    photo_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    scientist_id INTEGER,
+    caption      TEXT DEFAULT '',
+    sort_order   INTEGER DEFAULT 0,
+    hidden       INTEGER DEFAULT 0,
+    file_name    TEXT DEFAULT '',
+    mime_type    TEXT DEFAULT '',
+    storage      TEXT,
+    storage_ref  TEXT,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
 );
 
 CREATE TABLE IF NOT EXISTS journal_scores (
@@ -1443,6 +1479,7 @@ def delete_paper(pub_id):
     if not owner:
         return jsonify({"error": "Paper not found."}), 404
     _enforce_scientist_scope(owner["scientist_id"])
+    _delete_proofs_for("papers", pub_id)
     db.execute("DELETE FROM papers WHERE publication_id = ?", (pub_id,))
     db.commit()
     return jsonify({"message": "Paper deleted."})
@@ -1584,8 +1621,13 @@ def delete_scientist(target_id):
         return jsonify({"error": "Can't delete the only remaining profile."}), 400
 
     for table in ("papers", "awards", "projects", "book_chapters", "software",
-                  "courses_taught", "students_guided", "technology"):
+                  "courses_taught", "students_guided", "technology",
+                  "popular_articles", "policy_papers", "manuals",
+                  "conference_papers", "trainings_attended", "trainings_organised", "invited_talks",
+                  "research_team", "custom_entries", "proof_files", "gallery_photos"):
         db.execute(f"DELETE FROM {table} WHERE scientist_id = ?", (target_id,))
+    db.execute("DELETE FROM custom_subtabs WHERE tab_id IN (SELECT tab_id FROM custom_tabs WHERE scientist_id = ?)", (target_id,))
+    db.execute("DELETE FROM custom_tabs WHERE scientist_id = ?", (target_id,))
     db.execute("DELETE FROM profile_layout WHERE scientist_id = ?", (target_id,))
     db.execute("DELETE FROM scientists WHERE scientist_id = ?", (target_id,))
     db.commit()
@@ -1865,6 +1907,8 @@ def delete_custom_tab(tab_id):
     if not owner:
         return jsonify({"error": "Not found."}), 404
     _enforce_scientist_scope(owner["scientist_id"])
+    for e in db.execute("SELECT entry_id FROM custom_entries WHERE tab_id = ?", (tab_id,)).fetchall():
+        _delete_proofs_for("custom-entries", e["entry_id"])
     db.execute("DELETE FROM custom_entries WHERE tab_id = ?", (tab_id,))
     db.execute("DELETE FROM custom_subtabs WHERE tab_id = ?", (tab_id,))
     db.execute("DELETE FROM custom_tabs WHERE tab_id = ?", (tab_id,))
@@ -1952,6 +1996,7 @@ def delete_custom_entry(entry_id):
     if not owner:
         return jsonify({"error": "Not found."}), 404
     _enforce_scientist_scope(owner["scientist_id"])
+    _delete_proofs_for("custom-entries", entry_id)
     db.execute("DELETE FROM custom_entries WHERE entry_id = ?", (entry_id,))
     db.commit()
     return jsonify({"message": "Deleted."})
@@ -1983,6 +2028,647 @@ def toggle_custom_entry_cv(entry_id):
     db.execute("UPDATE custom_entries SET cv_included = ? WHERE entry_id = ?", (new_val, entry_id))
     db.commit()
     return jsonify({"message": "Added to CV." if new_val else "Removed from CV.", "cv_included": bool(new_val)})
+
+
+# ---------------------------------------------------------------------------
+# File storage — Google Drive (preferred) with a local-folder fallback.
+#
+# Proof documents and Gallery photos are NOT stored in the repository, so
+# they never grow the app's size. When Google Drive is connected they go to:
+#     My Drive / ARIMS Documents / <Person's name> / <Section> / <file>
+# Until Drive is connected they are saved under backend/uploads/ (git-ignored).
+#
+# Drive access uses Google's official OAuth flow with the narrow
+# "drive.file" scope: the app can only see files and folders it created
+# itself — never the rest of the Drive. No Google password is stored.
+# ---------------------------------------------------------------------------
+UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+DRIVE_ROOT_FOLDER_NAME = os.environ.get("GOOGLE_DRIVE_ROOT_FOLDER", "ARIMS Documents")
+MAX_PROOF_BYTES = 25 * 1024 * 1024
+MAX_PHOTO_BYTES = 20 * 1024 * 1024
+ALLOWED_PROOF_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".zip"}
+ALLOWED_PHOTO_EXT = {".png", ".jpg", ".jpeg", ".webp"}
+
+RECORD_SECTION_LABELS = {
+    "papers": "Research Papers", "awards": "Awards", "projects": "Projects",
+    "book-chapters": "Book Chapters", "software": "Software", "courses-taught": "Courses Taught",
+    "students-guided": "Students Guided", "technology": "Technology", "popular-articles": "Popular Articles",
+    "policy-papers": "Policy Papers", "manuals": "Manuals", "conference-papers": "Conference Papers",
+    "trainings-attended": "Trainings Attended", "trainings-organised": "Trainings Organised",
+    "invited-talks": "Invited Talks", "custom-entries": "Other Sections",
+}
+
+_drive_token_cache = {"token": None, "expires": 0.0}
+_drive_lock = threading.Lock()
+
+
+class DriveError(Exception):
+    pass
+
+
+def _setting_get(key, default=None):
+    row = get_db().execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def _setting_set(key, value):
+    db = get_db()
+    db.execute("INSERT INTO app_settings (key, value) VALUES (?, ?) "
+               "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+    db.commit()
+
+
+def _setting_delete_prefix(prefix):
+    db = get_db()
+    db.execute("DELETE FROM app_settings WHERE key LIKE ?", (prefix + "%",))
+    db.commit()
+
+
+def _safe_name(s, limit=120):
+    s = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", str(s or "")).strip(" ._")
+    return (s or "file")[:limit]
+
+
+def _google_client():
+    return os.environ.get("GOOGLE_CLIENT_ID", "").strip(), os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+
+
+def _drive_refresh_token():
+    env_token = os.environ.get("GOOGLE_REFRESH_TOKEN", "").strip()
+    if env_token:
+        return env_token, "env"
+    db_token = _setting_get("drive_refresh_token")
+    return (db_token, "db") if db_token else (None, None)
+
+
+def _drive_configured():
+    cid, secret = _google_client()
+    return bool(cid and secret and _drive_refresh_token()[0])
+
+
+def _http(method, url, data=None, headers=None, timeout=90):
+    """Minimal HTTP helper (standard library only). Returns (status, body_bytes, headers)."""
+    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read(), dict(resp.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), dict(e.headers or {})
+    except urllib.error.URLError as e:
+        raise DriveError(f"Could not reach Google ({e.reason}). Check this server's internet connection.")
+
+
+def _drive_access_token(force=False):
+    with _drive_lock:
+        if not force and _drive_token_cache["token"] and _drive_token_cache["expires"] > time.time():
+            return _drive_token_cache["token"]
+        cid, secret = _google_client()
+        refresh_token, _src = _drive_refresh_token()
+        if not (cid and secret and refresh_token):
+            raise DriveError("Google Drive is not connected.")
+        body = urllib.parse.urlencode({
+            "client_id": cid, "client_secret": secret,
+            "refresh_token": refresh_token, "grant_type": "refresh_token",
+        }).encode()
+        status, raw, _ = _http("POST", "https://oauth2.googleapis.com/token", data=body,
+                               headers={"Content-Type": "application/x-www-form-urlencoded"})
+        if status != 200:
+            raise DriveError("Google refused the saved Drive connection. Use 'Google Drive' → Connect again in the admin toolbar.")
+        tok = json.loads(raw)
+        _drive_token_cache["token"] = tok["access_token"]
+        _drive_token_cache["expires"] = time.time() + int(tok.get("expires_in", 3600)) - 60
+        return tok["access_token"]
+
+
+def _drive_api(method, path_or_url, params=None, json_body=None, data=None, headers=None, raw=False):
+    url = path_or_url if path_or_url.startswith("http") else "https://www.googleapis.com/drive/v3/" + path_or_url
+    if params:
+        url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+    status, resp, resp_headers = 0, b"", {}
+    for attempt in (0, 1):
+        h = {"Authorization": f"Bearer {_drive_access_token(force=attempt == 1)}"}
+        h.update(headers or {})
+        body = data
+        if json_body is not None:
+            body = json.dumps(json_body).encode()
+            h["Content-Type"] = "application/json; charset=UTF-8"
+        status, resp, resp_headers = _http(method, url, data=body, headers=h)
+        if status != 401:
+            break
+    if status >= 400:
+        try:
+            msg = json.loads(resp)["error"]["message"]
+        except Exception:
+            msg = resp[:200].decode("utf-8", "replace")
+        raise DriveError(f"Google Drive error {status}: {msg}")
+    if raw:
+        return resp, resp_headers
+    return json.loads(resp) if resp else {}
+
+
+def _drive_q(s):
+    return str(s).replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _drive_folder(name, parent_id):
+    """Finds or creates a folder (cached by id; re-created if the user deleted it in Drive)."""
+    cache_key = f"drive_folder:{parent_id}:{name}"
+    cached = _setting_get(cache_key)
+    if cached:
+        try:
+            meta = _drive_api("GET", f"files/{cached}", params={"fields": "id,trashed"})
+            if not meta.get("trashed"):
+                return cached
+        except DriveError:
+            pass
+    q = (f"name = '{_drive_q(name)}' and mimeType = 'application/vnd.google-apps.folder' "
+         f"and '{_drive_q(parent_id)}' in parents and trashed = false")
+    found = _drive_api("GET", "files", params={"q": q, "fields": "files(id)", "spaces": "drive", "pageSize": 1})
+    if found.get("files"):
+        folder_id = found["files"][0]["id"]
+    else:
+        folder_id = _drive_api("POST", "files", params={"fields": "id"}, json_body={
+            "name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id],
+        })["id"]
+    _setting_set(cache_key, folder_id)
+    return folder_id
+
+
+def _drive_upload(folder_id, file_name, mime, content):
+    boundary = "arims" + uuid.uuid4().hex
+    meta = json.dumps({"name": file_name, "parents": [folder_id]})
+    body = (
+        f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{meta}\r\n"
+        f"--{boundary}\r\nContent-Type: {mime or 'application/octet-stream'}\r\n\r\n"
+    ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
+    return _drive_api(
+        "POST", "https://www.googleapis.com/upload/drive/v3/files",
+        params={"uploadType": "multipart", "fields": "id,name,webViewLink,mimeType,size"},
+        data=body, headers={"Content-Type": f"multipart/related; boundary={boundary}"},
+    )
+
+
+def _store_file(scientist_id, section, file_name, mime, content):
+    """Saves a file for one person. Returns (storage, storage_ref, web_link)."""
+    row = get_db().execute("SELECT name FROM scientists WHERE scientist_id = ?", (scientist_id,)).fetchone()
+    person = _safe_name(row["name"] if row else f"Profile {scientist_id}")
+    if _drive_configured():
+        root = _drive_folder(DRIVE_ROOT_FOLDER_NAME, "root")
+        person_folder = _drive_folder(person, root)
+        section_folder = _drive_folder(section, person_folder)
+        meta = _drive_upload(section_folder, file_name, mime, content)
+        return "drive", meta["id"], meta.get("webViewLink", "")
+    rel = os.path.join(person, _safe_name(section), f"{uuid.uuid4().hex[:8]}_{_safe_name(file_name)}")
+    path = os.path.join(UPLOADS_DIR, rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(content)
+    return "local", rel, ""
+
+
+def _local_path(ref):
+    path = os.path.realpath(os.path.join(UPLOADS_DIR, ref))
+    if not path.startswith(os.path.realpath(UPLOADS_DIR) + os.sep):
+        raise DriveError("Invalid file reference.")
+    return path
+
+
+def _read_stored(storage, ref):
+    if storage == "drive":
+        content, _ = _drive_api("GET", f"files/{urllib.parse.quote(ref)}", params={"alt": "media"}, raw=True)
+        return content
+    with open(_local_path(ref), "rb") as f:
+        return f.read()
+
+
+def _delete_stored(storage, ref):
+    """Best-effort: Drive files go to Drive's Trash (recoverable for 30 days)."""
+    try:
+        if storage == "drive":
+            if _drive_configured():
+                _drive_api("PATCH", f"files/{urllib.parse.quote(ref)}", json_body={"trashed": True})
+        else:
+            os.remove(_local_path(ref))
+    except Exception as e:
+        print(f"[storage] could not remove {storage}:{ref}: {e}")
+
+
+def _read_upload(max_bytes, allowed_ext):
+    """Reads the multipart 'file' field with size/type checks. Returns (name, mime, bytes) or raises ValueError."""
+    if "file" not in request.files:
+        raise ValueError("No file was attached.")
+    f = request.files["file"]
+    name = f.filename or "file"
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in allowed_ext:
+        raise ValueError(f"File type {ext or '(none)'} is not allowed. Allowed: {', '.join(sorted(allowed_ext))}")
+    content = f.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise ValueError(f"File is too large (max {max_bytes // (1024 * 1024)} MB).")
+    if not content:
+        raise ValueError("The file is empty.")
+    return name, (f.mimetype or "application/octet-stream"), content
+
+
+def _optimise_photo(name, content):
+    """Shrinks very large photos (e.g. 8 MB phone pictures) so the gallery loads fast. Keeps the original on failure."""
+    try:
+        from PIL import Image as PILImage, ImageOps
+        import io
+        img = PILImage.open(io.BytesIO(content))
+        img = ImageOps.exif_transpose(img)
+        if max(img.size) <= 1800 and len(content) <= 1_500_000:
+            return name, None, content
+        img.thumbnail((1800, 1800))
+        out = io.BytesIO()
+        if img.mode in ("RGBA", "LA", "P") and "transparency" in img.info or img.mode in ("RGBA", "LA"):
+            img.save(out, format="PNG", optimize=True)
+            return os.path.splitext(name)[0] + ".png", "image/png", out.getvalue()
+        img.convert("RGB").save(out, format="JPEG", quality=85, optimize=True)
+        return os.path.splitext(name)[0] + ".jpg", "image/jpeg", out.getvalue()
+    except Exception:
+        return name, None, content
+
+
+def _proof_target(record_type):
+    """(table, id_column) for a record type that can carry proof documents, or None."""
+    if record_type == "papers":
+        return "papers", "publication_id"
+    if record_type == "custom-entries":
+        return "custom_entries", "entry_id"
+    cfg = SIMPLE_TABLES.get(record_type)
+    return (cfg.get("table", record_type.replace("-", "_")), cfg["id_col"]) if cfg else None
+
+
+def _record_owner_and_label(record_type, record_id):
+    target = _proof_target(record_type)
+    if not target:
+        return None, None
+    table, id_col = target
+    row = get_db().execute(f"SELECT * FROM {table} WHERE {id_col} = ?", (record_id,)).fetchone()
+    if not row:
+        return None, None
+    d = dict(row)
+    label = next((d.get(k) for k in ("title", "project_title", "package_name", "course_name", "name", "description") if d.get(k)), "")
+    return d.get("scientist_id"), str(label)
+
+
+def _error(msg, code=400):
+    return jsonify({"error": msg}), code
+
+
+# ---- Proof documents -------------------------------------------------------
+
+@app.route("/api/proofs", methods=["GET"])
+@require_auth
+def list_proofs():
+    record_type = request.args.get("record_type", "")
+    record_id = request.args.get("record_id", type=int)
+    owner, _ = _record_owner_and_label(record_type, record_id)
+    if owner is None:
+        return _error("Record not found.", 404)
+    _enforce_scientist_scope(owner)
+    rows = get_db().execute(
+        "SELECT proof_id, file_name, mime_type, size_bytes, storage, web_link, created_at FROM proof_files "
+        "WHERE record_type = ? AND record_id = ? ORDER BY proof_id ASC", (record_type, record_id),
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/proofs/counts", methods=["GET"])
+@require_auth
+def proof_counts():
+    """{record_type: {record_id: count}} for the selected profile — drives the 'Proof (n)' badges."""
+    scientist_id = _get_scientist_id()
+    _enforce_scientist_scope(scientist_id)
+    rows = get_db().execute(
+        "SELECT record_type, record_id, COUNT(*) c FROM proof_files WHERE scientist_id = ? GROUP BY record_type, record_id",
+        (scientist_id,),
+    ).fetchall()
+    out = {}
+    for r in rows:
+        out.setdefault(r["record_type"], {})[str(r["record_id"])] = r["c"]
+    return jsonify(out)
+
+
+@app.route("/api/proofs", methods=["POST"])
+@require_auth
+def upload_proof():
+    record_type = request.form.get("record_type", "")
+    try:
+        record_id = int(request.form.get("record_id", ""))
+    except ValueError:
+        return _error("record_id is required.")
+    owner, label = _record_owner_and_label(record_type, record_id)
+    if owner is None:
+        return _error("Record not found.", 404)
+    _enforce_scientist_scope(owner)
+    try:
+        name, mime, content = _read_upload(MAX_PROOF_BYTES, ALLOWED_PROOF_EXT)
+    except ValueError as e:
+        return _error(str(e))
+    section = RECORD_SECTION_LABELS.get(record_type, record_type.replace("-", " ").title())
+    stored_name = _safe_name(f"{label[:70]} - {name}" if label else name, limit=180)
+    try:
+        storage, ref, link = _store_file(owner, section, stored_name, mime, content)
+    except DriveError as e:
+        return _error(str(e), 502)
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO proof_files (scientist_id, record_type, record_id, file_name, mime_type, size_bytes, storage, storage_ref, web_link) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (owner, record_type, record_id, name, mime, len(content), storage, ref, link),
+    )
+    db.commit()
+    where = "Google Drive" if storage == "drive" else "this server (Google Drive not connected yet)"
+    return jsonify({"message": f"Saved to {where}.", "proof_id": cur.lastrowid, "storage": storage}), 201
+
+
+@app.route("/api/proofs/<int:proof_id>/file", methods=["GET"])
+@require_auth
+def download_proof(proof_id):
+    row = get_db().execute("SELECT * FROM proof_files WHERE proof_id = ?", (proof_id,)).fetchone()
+    if not row:
+        return _error("Not found.", 404)
+    _enforce_scientist_scope(row["scientist_id"])
+    try:
+        content = _read_stored(row["storage"], row["storage_ref"])
+    except (DriveError, OSError) as e:
+        return _error(f"Could not open this file: {e}", 502)
+    from flask import Response
+    disposition = "inline" if (row["mime_type"] or "").startswith(("image/", "application/pdf")) else "attachment"
+    return Response(content, mimetype=row["mime_type"] or "application/octet-stream", headers={
+        "Content-Disposition": f"{disposition}; filename*=UTF-8''{urllib.parse.quote(row['file_name'])}",
+        "Cache-Control": "private, no-store",
+    })
+
+
+@app.route("/api/proofs/<int:proof_id>", methods=["DELETE"])
+@require_auth
+def delete_proof(proof_id):
+    db = get_db()
+    row = db.execute("SELECT * FROM proof_files WHERE proof_id = ?", (proof_id,)).fetchone()
+    if not row:
+        return _error("Not found.", 404)
+    _enforce_scientist_scope(row["scientist_id"])
+    _delete_stored(row["storage"], row["storage_ref"])
+    db.execute("DELETE FROM proof_files WHERE proof_id = ?", (proof_id,))
+    db.commit()
+    return jsonify({"message": "Proof deleted."})
+
+
+def _delete_proofs_for(record_type, record_id):
+    """Called when a record is deleted, so its proof files don't linger."""
+    db = get_db()
+    for row in db.execute("SELECT storage, storage_ref FROM proof_files WHERE record_type = ? AND record_id = ?",
+                          (record_type, record_id)).fetchall():
+        _delete_stored(row["storage"], row["storage_ref"])
+    db.execute("DELETE FROM proof_files WHERE record_type = ? AND record_id = ?", (record_type, record_id))
+
+
+# ---- Gallery ---------------------------------------------------------------
+
+@app.route("/api/gallery", methods=["GET"])
+def list_gallery():
+    scientist_id = _get_scientist_id()
+    hidden_clause = "" if is_admin_request() else "AND hidden = 0"
+    rows = get_db().execute(
+        f"SELECT photo_id, caption, sort_order, hidden, storage FROM gallery_photos "
+        f"WHERE scientist_id = ? {hidden_clause} ORDER BY sort_order ASC, photo_id ASC", (scientist_id,),
+    ).fetchall()
+    return jsonify([{**dict(r), "image_url": f"/api/gallery/{r['photo_id']}/image"} for r in rows])
+
+
+@app.route("/api/gallery", methods=["POST"])
+@require_auth
+def add_gallery_photo():
+    scientist_id = _get_scientist_id()
+    _enforce_scientist_scope(scientist_id)
+    try:
+        name, mime, content = _read_upload(MAX_PHOTO_BYTES, ALLOWED_PHOTO_EXT)
+    except ValueError as e:
+        return _error(str(e))
+    name, new_mime, content = _optimise_photo(name, content)
+    mime = new_mime or mime
+    try:
+        storage, ref, _link = _store_file(scientist_id, "Gallery", name, mime, content)
+    except DriveError as e:
+        return _error(str(e), 502)
+    db = get_db()
+    max_order = db.execute("SELECT COALESCE(MAX(sort_order), -1) FROM gallery_photos WHERE scientist_id = ?", (scientist_id,)).fetchone()[0]
+    cur = db.execute(
+        "INSERT INTO gallery_photos (scientist_id, caption, sort_order, file_name, mime_type, storage, storage_ref) VALUES (?,?,?,?,?,?,?)",
+        (scientist_id, (request.form.get("caption") or "").strip(), max_order + 1, name, mime, storage, ref),
+    )
+    db.commit()
+    where = "Google Drive" if storage == "drive" else "this server (Google Drive not connected yet)"
+    return jsonify({"message": f"Photo added — saved to {where}.", "photo_id": cur.lastrowid}), 201
+
+
+def _gallery_row_scoped(photo_id):
+    row = get_db().execute("SELECT * FROM gallery_photos WHERE photo_id = ?", (photo_id,)).fetchone()
+    if row:
+        _enforce_scientist_scope(row["scientist_id"])
+    return row
+
+
+@app.route("/api/gallery/<int:photo_id>", methods=["PUT"])
+@require_auth
+def update_gallery_photo(photo_id):
+    if not _gallery_row_scoped(photo_id):
+        return _error("Not found.", 404)
+    data = request.get_json(force=True)
+    db = get_db()
+    db.execute("UPDATE gallery_photos SET caption = ? WHERE photo_id = ?", ((data.get("caption") or "").strip(), photo_id))
+    db.commit()
+    return jsonify({"message": "Caption updated."})
+
+
+@app.route("/api/gallery/<int:photo_id>", methods=["DELETE"])
+@require_auth
+def delete_gallery_photo(photo_id):
+    row = _gallery_row_scoped(photo_id)
+    if not row:
+        return _error("Not found.", 404)
+    _delete_stored(row["storage"], row["storage_ref"])
+    db = get_db()
+    db.execute("DELETE FROM gallery_photos WHERE photo_id = ?", (photo_id,))
+    db.commit()
+    return jsonify({"message": "Photo deleted."})
+
+
+@app.route("/api/gallery/<int:photo_id>/toggle-hidden", methods=["POST"])
+@require_auth
+def toggle_gallery_hidden(photo_id):
+    row = _gallery_row_scoped(photo_id)
+    if not row:
+        return _error("Not found.", 404)
+    new_val = 0 if row["hidden"] else 1
+    db = get_db()
+    db.execute("UPDATE gallery_photos SET hidden = ? WHERE photo_id = ?", (new_val, photo_id))
+    db.commit()
+    return jsonify({"message": "Hidden." if new_val else "Visible again.", "hidden": bool(new_val)})
+
+
+@app.route("/api/gallery/reorder", methods=["PUT"])
+@require_auth
+def reorder_gallery():
+    scientist_id = _get_scientist_id()
+    _enforce_scientist_scope(scientist_id)
+    db = get_db()
+    for idx, photo_id in enumerate(request.get_json(force=True).get("order", [])):
+        db.execute("UPDATE gallery_photos SET sort_order = ? WHERE photo_id = ? AND scientist_id = ?", (idx, photo_id, scientist_id))
+    db.commit()
+    return jsonify({"message": "Order saved."})
+
+
+_gallery_cache = {}  # photo_id -> (storage_ref, bytes); small in-memory cache so Drive isn't hit on every view
+_GALLERY_CACHE_LIMIT = 40 * 1024 * 1024
+
+
+@app.route("/api/gallery/<int:photo_id>/image", methods=["GET"])
+def gallery_image(photo_id):
+    row = get_db().execute("SELECT * FROM gallery_photos WHERE photo_id = ?", (photo_id,)).fetchone()
+    if not row or (row["hidden"] and not is_admin_request()):
+        return _error("Not found.", 404)
+    cached = _gallery_cache.get(photo_id)
+    if cached and cached[0] == row["storage_ref"]:
+        content = cached[1]
+    else:
+        try:
+            content = _read_stored(row["storage"], row["storage_ref"])
+        except (DriveError, OSError) as e:
+            return _error(f"Could not load photo: {e}", 502)
+        while _gallery_cache and sum(len(v[1]) for v in _gallery_cache.values()) + len(content) > _GALLERY_CACHE_LIMIT:
+            _gallery_cache.pop(next(iter(_gallery_cache)))
+        _gallery_cache[photo_id] = (row["storage_ref"], content)
+    from flask import Response
+    return Response(content, mimetype=row["mime_type"] or "image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+# ---- Google Drive connection (one-time OAuth by the site admin) -------------
+
+def _oauth_redirect_uri():
+    override = os.environ.get("GOOGLE_REDIRECT_URI", "").strip()
+    if override:
+        return override
+    proto = request.headers.get("X-Forwarded-Proto", request.scheme).split(",")[0].strip()
+    host = request.headers.get("X-Forwarded-Host", request.host).split(",")[0].strip()
+    return f"{proto}://{host}/api/drive/oauth/callback"
+
+
+@app.route("/api/drive/status", methods=["GET"])
+@require_auth
+def drive_status():
+    cid, secret = _google_client()
+    token, source = _drive_refresh_token()
+    return jsonify({
+        "client_configured": bool(cid and secret),
+        "connected": bool(cid and secret and token),
+        "source": source,
+        "email": _setting_get("drive_email", ""),
+        "root_folder": DRIVE_ROOT_FOLDER_NAME,
+        "redirect_uri": _oauth_redirect_uri(),
+        "is_super_admin": getattr(g, "session_role", "super_admin") == "super_admin",
+    })
+
+
+@app.route("/api/drive/auth-url", methods=["POST"])
+@require_auth
+def drive_auth_url():
+    _require_super_admin()
+    cid, secret = _google_client()
+    if not (cid and secret):
+        return _error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not set on this server yet — see the setup steps.")
+    state = uuid.uuid4().hex
+    redirect_uri = _oauth_redirect_uri()
+    _setting_set(f"drive_oauth_state:{state}", json.dumps({"expires": time.time() + 600, "redirect_uri": redirect_uri}))
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode({
+        "client_id": cid, "redirect_uri": redirect_uri, "response_type": "code",
+        "scope": DRIVE_SCOPE, "access_type": "offline", "prompt": "consent", "state": state,
+        "include_granted_scopes": "true",
+    })
+    return jsonify({"url": url})
+
+
+def _oauth_page(title, body_html, ok=True):
+    color = "#2F5D3A" if ok else "#9B2C2C"
+    page = f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{html_lib.escape(title)}</title><style>
+body{{font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;background:#fff;color:#1C2B39;margin:0;padding:40px 16px}}
+.card{{max-width:640px;margin:0 auto;border:1px solid #DCD5C4;border-radius:10px;padding:28px}}
+h1{{font-size:1.3rem;color:{color};margin-top:0}} code,textarea{{font-family:ui-monospace,Consolas,monospace;font-size:.85rem}}
+textarea{{width:100%;box-sizing:border-box;height:70px;margin:8px 0}} a.btn{{display:inline-block;margin-top:14px;padding:9px 16px;background:#454F32;color:#fff;border-radius:6px;text-decoration:none}}
+</style></head><body><div class="card"><h1>{html_lib.escape(title)}</h1>{body_html}<a class="btn" href="/" onclick="if (window.opener) {{ window.close(); return false; }}">Close and return to the website</a></div></body></html>"""
+    return page, (200 if ok else 400), {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/api/drive/oauth/callback", methods=["GET"])
+def drive_oauth_callback():
+    """Google redirects the admin's browser here after they approve access."""
+    if request.args.get("error"):
+        return _oauth_page("Google Drive was not connected", f"<p>Google said: {html_lib.escape(request.args['error'])}</p>", ok=False)
+    state = request.args.get("state", "")
+    code = request.args.get("code", "")
+    saved = _setting_get(f"drive_oauth_state:{state}") if state else None
+    _setting_delete_prefix(f"drive_oauth_state:{state}") if state else None
+    if not saved or not code:
+        return _oauth_page("Link expired", "<p>This connection link is invalid or was already used. Start again from the website.</p>", ok=False)
+    saved = json.loads(saved)
+    if saved["expires"] < time.time():
+        return _oauth_page("Link expired", "<p>Please start the connection again from the website (links last 10 minutes).</p>", ok=False)
+    cid, secret = _google_client()
+    status, raw, _ = _http("POST", "https://oauth2.googleapis.com/token", data=urllib.parse.urlencode({
+        "code": code, "client_id": cid, "client_secret": secret,
+        "redirect_uri": saved["redirect_uri"], "grant_type": "authorization_code",
+    }).encode(), headers={"Content-Type": "application/x-www-form-urlencoded"})
+    tok = json.loads(raw) if raw else {}
+    if status != 200 or not tok.get("refresh_token"):
+        return _oauth_page("Google Drive was not connected",
+                           f"<p>Google did not return access ({html_lib.escape(str(tok.get('error_description') or tok.get('error') or status))}).</p>", ok=False)
+    _setting_set("drive_refresh_token", tok["refresh_token"])
+    _setting_delete_prefix("drive_folder:")  # folders belong to the account; re-discover for this one
+    with _drive_lock:
+        _drive_token_cache["token"] = tok.get("access_token")
+        _drive_token_cache["expires"] = time.time() + int(tok.get("expires_in", 3600)) - 60
+    email = ""
+    try:
+        email = _drive_api("GET", "about", params={"fields": "user(emailAddress)"}).get("user", {}).get("emailAddress", "")
+        _setting_set("drive_email", email)
+    except DriveError:
+        pass
+    env_note = "" if os.environ.get("GOOGLE_REFRESH_TOKEN") else f"""
+<p><b>Hosting on Render?</b> Render wipes its disk on every deploy, which would forget this connection.
+To keep it permanently, add this as an Environment Variable named <code>GOOGLE_REFRESH_TOKEN</code> on Render
+(on your own Ubuntu server nothing more is needed):</p>
+<textarea readonly onclick="this.select()">{html_lib.escape(tok['refresh_token'])}</textarea>
+<p style="font-size:.85rem;color:#5B6470">Keep this value private — it lets this website add files to your Drive.</p>"""
+    return _oauth_page("Google Drive connected",
+                       f"<p>Files will now be saved to <b>{html_lib.escape(email or 'your Google Drive')}</b> in the folder "
+                       f"<b>{html_lib.escape(DRIVE_ROOT_FOLDER_NAME)}</b>, one sub-folder per person.</p>{env_note}")
+
+
+@app.route("/api/drive/disconnect", methods=["POST"])
+@require_auth
+def drive_disconnect():
+    _require_super_admin()
+    token, source = _drive_refresh_token()
+    if source == "env":
+        return _error("This connection comes from the GOOGLE_REFRESH_TOKEN environment variable — remove it in your hosting settings instead.")
+    if token:
+        try:
+            _http("POST", "https://oauth2.googleapis.com/revoke?" + urllib.parse.urlencode({"token": token}),
+                  headers={"Content-Type": "application/x-www-form-urlencoded"})
+        except DriveError:
+            pass
+    _setting_delete_prefix("drive_refresh_token")
+    _setting_delete_prefix("drive_email")
+    _setting_delete_prefix("drive_folder:")
+    with _drive_lock:
+        _drive_token_cache.update({"token": None, "expires": 0.0})
+    return jsonify({"message": "Google Drive disconnected. Files already saved in Drive stay there."})
 
 
 @app.route("/api/profile-layout", methods=["GET"])
@@ -2349,6 +3035,7 @@ def _register_simple_crud(endpoint_name, config):
         if not owner:
             return jsonify({"error": "Not found."}), 404
         _enforce_scientist_scope(owner["scientist_id"])
+        _delete_proofs_for(endpoint_name, item_id)
         db.execute(f"DELETE FROM {table} WHERE {id_col} = ?", (item_id,))
         db.commit()
         return jsonify({"message": "Deleted."})
@@ -2891,10 +3578,58 @@ def reset_journal_scores():
 # styled PDF. Uses reportlab (pure Python, no system graphics libraries
 # required) so it works the same locally and on minimal hosts like Render.
 # ---------------------------------------------------------------------------
+_NAME_PREFIX_RE = re.compile(r"^(?:dr|prof|mr|mrs|ms|shri|smt|er)\.?\s+", re.I)
+_MD_VARIANTS = {"md", "mohd", "mohammad", "mohammed", "muhammad"}
+
+
+def _author_name_regex(full_name):
+    """
+    Builds a regex that finds THIS person's name inside an author list, in the
+    usual citation spellings — "Yeasin, M.", "Yeasin M*.", "Md Yeasin",
+    "M. Yeasin", "Paul, R. K.", "RK Paul", "Ranjit Kumar Paul" — while NOT
+    matching a different person who shares the surname (e.g. "Paul, A. K."),
+    because the first given-name initial must match too.
+    Returns None when the name has no usable surname + given name.
+    """
+    name = (full_name or "").strip()
+    while True:
+        stripped = _NAME_PREFIX_RE.sub("", name)
+        if stripped == name:
+            break
+        name = stripped
+    name = name.split(",")[0]  # drop trailing credentials like ", FNAAS"
+    tokens = [t for t in re.split(r"[\s.]+", name) if t]
+    if len(tokens) < 2:
+        return None
+    surname, given = tokens[-1], tokens[:-1]
+
+    def alt(tok):
+        options = {re.escape(tok), re.escape(tok[0])}
+        if tok.lower() in _MD_VARIANTS:
+            options |= {"Md", "Mohd", "Mohammad", "Mohammed", "Muhammad", "M"}
+        # longest first so "Md" is tried before "M"
+        return "(?:" + "|".join(sorted(options, key=len, reverse=True)) + r")\.?"
+
+    given_re = alt(given[0]) + "".join(r"(?:[\s\-]*" + alt(g) + ")?" for g in given[1:])
+    sur = re.escape(surname)
+    surname_first = rf"(?<![A-Za-z]){sur},?\s*{given_re}(?![A-Za-z])\*?\.?"
+    given_first = rf"(?<![A-Za-z]){given_re}\s+{sur}(?![A-Za-z])\*?"
+    return re.compile(f"(?:{surname_first})|(?:{given_first})")
+
+
+def _cp1252_safe(text):
+    try:
+        (text or "").encode("cp1252")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
 def _build_cv_pdf(scientist_id=1):
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, HRFlowable
@@ -2902,43 +3637,68 @@ def _build_cv_pdf(scientist_id=1):
     import io
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib.fonts import addMapping
 
-    # Some content (Popular Articles, Manuals) may be in Hindi/Devanagari
-    # script. ReportLab's built-in fonts (Times/Helvetica) have no glyphs for
-    # this — without a Unicode font registered, that text silently renders as
-    # garbled placeholder characters instead of failing loudly, so this is
-    # easy to miss. Noto Sans Devanagari also covers Latin script, so it's
-    # safe to use for any section that might mix English and Hindi entries.
+    # Hindi/Devanagari text needs a Unicode font — the built-in PDF fonts
+    # have no glyphs for it and silently print garbage instead. Noto Sans
+    # Devanagari also covers Latin, so any paragraph containing characters
+    # the standard fonts can't encode is switched to it automatically.
     _unicode_font_path = os.path.join(BASE_DIR, "NotoSansDevanagari.ttf")
-    _unicode_font_name = "Helvetica"  # fallback if the font file is missing
+    uni_font = "Helvetica"
     if os.path.exists(_unicode_font_path):
         try:
             pdfmetrics.registerFont(TTFont("NotoDevanagari", _unicode_font_path))
-            _unicode_font_name = "NotoDevanagari"
+            for bold in (0, 1):
+                for italic in (0, 1):
+                    addMapping("NotoDevanagari", bold, italic, "NotoDevanagari")
+            uni_font = "NotoDevanagari"
         except Exception:
             pass
 
     def esc(s):
-        """Escapes text for ReportLab's Paragraph markup parser — without this,
-        a literal '&' (e.g. 'Journal of X & Y') or '<'/'>' anywhere in real
-        bibliographic data breaks the parser with 'unclosed tags'."""
+        """Escapes text for ReportLab's Paragraph markup ('&', '<', '>')."""
         if s is None:
             return ""
         return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
+    def B(markup):
+        return f'<font name="Helvetica-Bold">{markup}</font>' if markup else ""
+
+    def I(markup):
+        return f'<font name="Helvetica-Oblique">{markup}</font>' if markup and _cp1252_safe(markup) else markup
+
     ink = colors.HexColor("#1C2B39")
     olive = colors.HexColor("#454F32")
-    slate = colors.HexColor("#6B7280")
-    line = colors.HexColor("#DCD5C4")
+    slate = colors.HexColor("#5B6470")
+    rule = colors.HexColor("#C9C2AE")
+
+    BODY_SIZE, BODY_LEAD, HANG = 9.6, 13.4, 20
 
     name_style = ParagraphStyle("name", fontName="Times-Bold", fontSize=22, textColor=ink, leading=26)
-    role_style = ParagraphStyle("role", fontName="Helvetica-Bold", fontSize=11, textColor=olive, spaceAfter=2)
-    small_style = ParagraphStyle("small", fontName="Helvetica", fontSize=8.5, textColor=slate, leading=12)
-    h2_style = ParagraphStyle("h2", fontName="Times-Bold", fontSize=14, textColor=ink, spaceBefore=14, spaceAfter=6)
-    body_style = ParagraphStyle("body", fontName="Helvetica", fontSize=9.5, textColor=colors.HexColor("#1C2B39"), leading=13.5)
-    meta_style = ParagraphStyle("meta", fontName="Helvetica-Oblique", fontSize=8.5, textColor=slate, leading=12, spaceAfter=8)
-    entry_title_style = ParagraphStyle("entry_title", fontName="Helvetica-Bold", fontSize=9.5, textColor=ink, leading=13, spaceBefore=6)
-    unicode_body_style = ParagraphStyle("unicode_body", fontName=_unicode_font_name, fontSize=9.5, textColor=colors.HexColor("#1C2B39"), leading=15)
+    role_style = ParagraphStyle("role", fontName="Helvetica-Bold", fontSize=10.5, textColor=olive, leading=14, spaceAfter=2)
+    small_style = ParagraphStyle("small", fontName="Helvetica", fontSize=8.8, textColor=slate, leading=12.5)
+    h2_style = ParagraphStyle("h2", fontName="Times-Bold", fontSize=13.5, textColor=ink, leading=16,
+                              spaceBefore=12, spaceAfter=2, keepWithNext=1)
+    h3_style = ParagraphStyle("h3", fontName="Helvetica-Bold", fontSize=9.8, textColor=olive, leading=13,
+                              spaceBefore=6, spaceAfter=3, keepWithNext=1)
+    # Numbered/bulleted entries: hanging indent so wrapped lines align under
+    # the text (not under the number), justified edges, consistent spacing.
+    item_style = ParagraphStyle("item", fontName="Helvetica", fontSize=BODY_SIZE, leading=BODY_LEAD, textColor=ink,
+                                alignment=TA_JUSTIFY, leftIndent=HANG, bulletIndent=0, spaceAfter=4.5,
+                                bulletFontName="Helvetica", bulletFontSize=BODY_SIZE,
+                                uriWasteReduce=0.1)  # let long URLs/DOIs wrap instead of stretching the line before them
+    meta_style = ParagraphStyle("meta", fontName="Helvetica", fontSize=8.4, leading=11, textColor=slate,
+                                alignment=TA_LEFT, leftIndent=HANG, spaceBefore=-2.5, spaceAfter=5)
+    uni_styles = {}
+
+    def para(markup, style, bullet=None):
+        if not _cp1252_safe(re.sub(r"<[^>]+>", "", markup)):
+            if style.name not in uni_styles:
+                uni_styles[style.name] = ParagraphStyle(style.name + "_u", parent=style, fontName=uni_font,
+                                                        bulletFontName=uni_font, leading=style.leading + 1.6,
+                                                        shaping=1)  # correct Devanagari vowel-sign placement
+            style = uni_styles[style.name]
+        return Paragraph(markup, style, bulletText=bullet)
 
     db = get_db()
 
@@ -2953,7 +3713,15 @@ def _build_cv_pdf(scientist_id=1):
     except (json.JSONDecodeError, TypeError):
         p["research_interest"] = [p["research_interest"]] if p["research_interest"] else []
 
-    # ---- Read the saved Home-tab tick state (profile_layout.config) ----
+    name_re = _author_name_regex(p.get("name", ""))
+
+    def hl(markup):
+        """Bolds this person's own name wherever it appears in already-escaped markup."""
+        if not name_re or not markup:
+            return markup
+        return name_re.sub(lambda m: B(m.group(0)), markup)
+
+    # ---- Saved Home-tab tick state (profile_layout.config) ----
     layout_row = db.execute("SELECT config FROM profile_layout WHERE scientist_id = ?", (scientist_id,)).fetchone()
     layout = json.loads(layout_row["config"]) if layout_row else {}
     cv_blocks = layout.get("cv_blocks")  # None = not yet configured -> include everything
@@ -2969,258 +3737,357 @@ def _build_cv_pdf(scientist_id=1):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
-        topMargin=18 * mm, bottomMargin=18 * mm, leftMargin=18 * mm, rightMargin=18 * mm,
+        topMargin=16 * mm, bottomMargin=18 * mm, leftMargin=18 * mm, rightMargin=18 * mm,
+        title=f"{p.get('name', '')} — Curriculum Vitae", author=p.get("name", ""),
     )
     story = []
 
-    # ---- Header block (photo + name/role/address) ----
+    def section_header(title):
+        story.append(Paragraph(esc(title), h2_style))
+        story.append(HRFlowable(width="100%", color=rule, thickness=0.6, spaceBefore=1, spaceAfter=6))
+
+    def numbered(items_markup):
+        for i, markup in enumerate(items_markup, 1):
+            story.append(para(markup, item_style, bullet=f"{i}."))
+
+    # ---- Header (photo + name / role / address / contact) ----
     if block_included("header"):
         photo_path = os.path.join(FRONTEND_DIR, p.get("photo_filename") or "yeasin-photo.png")
-        header_cells = []
+        photo_cell = ""
         if os.path.exists(photo_path):
             try:
-                header_cells.append(Image(photo_path, width=30 * mm, height=30 * mm))
+                photo_cell = Image(photo_path, width=28 * mm, height=28 * mm)
             except Exception:
-                header_cells.append("")
-        else:
-            header_cells.append("")
-
-        info_flow = [
+                photo_cell = ""
+        info = [
             Paragraph(esc(p["name"]), name_style),
-            Paragraph(f"{esc(p['designation'])} &middot; {esc(p['institute'])}", role_style),
-            Paragraph(esc(p.get("address", "")), small_style),
+            Paragraph(" &middot; ".join(x for x in (esc(p.get("designation")), esc(p.get("institute"))) if x), role_style),
         ]
-        header_cells.append(info_flow)
-
-        header_table = Table([header_cells], colWidths=[35 * mm, None])
-        header_table.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (0, 0), 0),
-            ("LEFTPADDING", (1, 0), (1, 0), 12),
-        ]))
-        story.append(header_table)
-        story.append(Spacer(1, 10))
-        story.append(HRFlowable(width="100%", color=line, thickness=0.75))
-        story.append(Spacer(1, 8))
-
-    # ---- Contact block ----
-    if block_included("contact"):
+        if p.get("address"):
+            info.append(para(esc(p["address"]), small_style))
         contact_bits = []
-        if p.get("dob"):
-            contact_bits.append(f"DOB: {esc(p['dob'])}")
-        if p.get("mobile"):
-            contact_bits.append("Mobile: " + esc(" / ".join(p["mobile"])))
         if p.get("email"):
             contact_bits.append("Email: " + esc(", ".join(p["email"])))
+        if p.get("mobile"):
+            contact_bits.append("Mobile: " + esc(" / ".join(p["mobile"])))
+        if p.get("dob"):
+            contact_bits.append("DOB: " + esc(p["dob"]))
         if contact_bits:
-            story.append(Paragraph(" &nbsp;|&nbsp; ".join(contact_bits), small_style))
-            story.append(Spacer(1, 6))
+            info.append(para(" &nbsp;|&nbsp; ".join(contact_bits), small_style))
+        header_table = Table([[photo_cell, info]], colWidths=[32 * mm, None])
+        header_table.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (0, 0), 0),
+            ("LEFTPADDING", (1, 0), (1, 0), 10),
+        ]))
+        story.append(header_table)
+        story.append(Spacer(1, 6))
+        story.append(HRFlowable(width="100%", color=olive, thickness=1.2, spaceAfter=4))
 
-    # ---- Research interest, education, accolades, employment, other records (all bulleted, per-item ticks) ----
-    # ---- Education / Accolades / Employment / Other Records (per-item ticks) ----
-    def list_block(block_id, title, data_items, render_fn):
+    # ---- Profile lists (per-item ticks) ----
+    def list_block(block_id, title, data_items, render_fn, numbered_list=False):
         if not block_included(block_id) or not data_items:
             return
-        included = [(i, item) for i, item in enumerate(data_items) if item_included(block_id, i)]
+        included = [item for i, item in enumerate(data_items) if item_included(block_id, i)]
         if not included:
             return
-        story.append(Paragraph(title, h2_style))
-        for i, item in included:
-            story.append(Paragraph(render_fn(item), body_style))
+        section_header(title)
+        for n, item in enumerate(included, 1):
+            story.append(para(render_fn(item), item_style, bullet=f"{n}." if numbered_list else "•"))
 
-    list_block("research_interest", "Research Interest", p.get("research_interest", []),
-               lambda r: esc(r))
-    list_block("current_work", "Current Work", p.get("current_work", []),
-               lambda r: esc(r))
+    list_block("research_interest", "Research Interest", p.get("research_interest", []), lambda r: esc(r))
+    list_block("current_work", "Current Work", p.get("current_work", []), lambda r: esc(r))
     list_block("education", "Education", p.get("education", []),
-               lambda e: f"<b>{esc(e['degree'])}</b> ({esc(e['year'])}) &middot; {esc(e['institution'])}")
-    list_block("accolades", "Academic Accolades", p.get("accolades", []),
-               lambda a: esc(a))
+               lambda e: f"{B(esc(e.get('degree')))} ({esc(e.get('year'))}), {esc(e.get('institution'))}")
     list_block("employment", "Employment", p.get("employment", []),
-               lambda e: f"<b>{esc(e['period'])}</b> &middot; {esc(e['role'])}, {esc(e['institution'])}")
-    list_block("other_records", "Other Records", p.get("other_records", []),
-               lambda r: esc(r))
+               lambda e: f"{B(esc(e.get('period')))}: {esc(e.get('role'))}, {esc(e.get('institution'))}")
+    list_block("accolades", "Academic Accolades", p.get("accolades", []), lambda a: esc(a))
+    list_block("other_records", "Other Records", p.get("other_records", []), lambda r: esc(r))
 
-    def section_header(title):
-        story.append(Paragraph(title, h2_style))
+    def q(sql):
+        return db.execute(sql, (scientist_id,)).fetchall()
 
-    # ---- Publications ----
-    rows = db.execute("SELECT * FROM papers WHERE scientist_id = ? AND cv_included = 1 ORDER BY year DESC", (scientist_id,)).fetchall()
+    # ---- Publications: own name bold, journal italic ----
+    def paper_markup(r):
+        ref = (r["complete_reference"] or "").strip()
+        title = (r["title"] or "").strip()
+        journal = (r["journal"] or "").strip()
+        if not ref:
+            parts = [esc(r["authors"]), f"({esc(r['year'])})." if r["year"] else "", esc(title) + "." if title else "",
+                     I(esc(journal)) + "." if journal else ""]
+            return hl(" ".join(x for x in parts if x))
+        if journal:
+            start = ref.find(title) + len(title) if title and title in ref else 0
+            j = ref.find(journal, start)
+            if j < 0:
+                j = ref.lower().find(journal.lower(), start)
+            if j >= 0:
+                span = ref[j:j + len(journal)]
+                cut = re.search(r"\s+(?:\d|\(|https?://|doi)|[.,;]\s*(?:\d|https?://|doi)", span, re.I)
+                if cut:
+                    span = span[:cut.start()]
+                span = span.rstrip(" .,;:")
+                k = j + len(span)
+                return hl(esc(ref[:j]) + I(esc(span)) + esc(ref[k:]))
+        return hl(esc(ref))
+
+    rows = q("SELECT * FROM papers WHERE scientist_id = ? AND cv_included = 1 ORDER BY year DESC")
     if rows:
-        section_header(f"Publications ({len(rows)})")
+        section_header(f"Research Publications ({len(rows)})")
         for i, r in enumerate(rows, 1):
-            story.append(Paragraph(f"{i}. {esc(r['complete_reference'] or r['title'])}", body_style))
-            tag_bits = []
-            if r["quartile"]:
-                tag_bits.append(esc(r["quartile"]))
+            story.append(para(paper_markup(r), item_style, bullet=f"{i}."))
+            tags = []
             if r["impact_factor"]:
-                tag_bits.append(f"IF {esc(r['impact_factor'])}")
+                tags.append(f"Impact Factor: {esc(r['impact_factor'])}")
             if r["naas_score"]:
-                tag_bits.append(f"NAAS {esc(r['naas_score'])}")
-            if tag_bits:
-                story.append(Paragraph(" &middot; ".join(tag_bits), meta_style))
+                tags.append(f"NAAS: {esc(r['naas_score'])}")
+            if r["quartile"]:
+                tags.append(f"Quartile: {esc(r['quartile'])}")
+            if tags:
+                story.append(para(" &nbsp;&middot;&nbsp; ".join(tags), meta_style))
 
     # ---- Awards ----
-    rows = db.execute("SELECT * FROM awards WHERE scientist_id = ? AND cv_included = 1 ORDER BY year DESC", (scientist_id,)).fetchall()
+    rows = q("SELECT * FROM awards WHERE scientist_id = ? AND cv_included = 1 ORDER BY year DESC")
     if rows:
-        section_header(f"Awards ({len(rows)})")
-        for r in rows:
-            story.append(Paragraph(esc(r["title"]), entry_title_style))
-            story.append(Paragraph(f"{esc(r['awarding_body'])} &middot; {esc(r['year'])}", meta_style))
+        section_header(f"Awards and Recognition ({len(rows)})")
+        numbered([
+            B(esc(r["title"])) + (f", {esc(r['awarding_body'])}" if r["awarding_body"] else "")
+            + (f" ({esc(r['year'])})" if r["year"] else "") + "."
+            + (f" {esc(r['description'])}" if r["description"] else "")
+            for r in rows
+        ])
 
     # ---- Projects ----
-    rows = db.execute("SELECT * FROM projects WHERE scientist_id = ? AND cv_included = 1 ORDER BY date_start DESC", (scientist_id,)).fetchall()
+    rows = q("SELECT * FROM projects WHERE scientist_id = ? AND cv_included = 1 ORDER BY date_start DESC")
     if rows:
-        section_header(f"Projects ({len(rows)})")
+        section_header(f"Research Projects ({len(rows)})")
+        out = []
         for r in rows:
-            story.append(Paragraph(esc(r["project_title"]), entry_title_style))
-            date_bit = f"Started {esc(r['date_start'])}" + (f" &middot; Ended {esc(r['date_end'])}" if r["date_end"] else "")
-            story.append(Paragraph(f"{esc(r['funding_agency'])} &middot; {date_bit} &middot; {esc(r['status'])}", meta_style))
+            period = " – ".join(x for x in (esc(r["date_start"]), esc(r["date_end"])) if x)
+            bits = [B(esc(r["project_title"])) + "."]
+            if r["investigators"]:
+                bits.append(hl(esc(r["investigators"])) + ".")
+            if r["funding_agency"]:
+                bits.append(f"Funded by {esc(r['funding_agency'])}.")
+            tail = ", ".join(x for x in (period, esc(r["status"])) if x)
+            if tail:
+                bits.append(f"({tail})")
+            out.append(" ".join(bits))
+        numbered(out)
 
     # ---- Book Chapters ----
-    rows = db.execute("SELECT * FROM book_chapters WHERE scientist_id = ? AND cv_included = 1 ORDER BY year DESC", (scientist_id,)).fetchall()
+    rows = q("SELECT * FROM book_chapters WHERE scientist_id = ? AND cv_included = 1 ORDER BY year DESC")
     if rows:
         section_header(f"Book Chapters ({len(rows)})")
+        out = []
         for r in rows:
-            story.append(Paragraph(esc(r["title"]), entry_title_style))
-            author_bit = esc(r["authors"]) + (f" &middot; Editor: {esc(r['editor'])}" if r["editor"] else "")
-            story.append(Paragraph(author_bit, body_style))
-            story.append(Paragraph(f"{esc(r['book_title'])} &middot; {esc(r['publisher'])} &middot; {esc(r['year'])}", meta_style))
+            s = hl(esc(r["authors"]))
+            if r["year"]:
+                s += f" ({esc(r['year'])})"
+            s += f". {esc(r['title'])}."
+            if r["book_title"] or r["editor"]:
+                s += " In:"
+                if r["editor"]:
+                    s += f" {esc(r['editor'])} (Eds.),"
+                if r["book_title"]:
+                    s += " " + I(esc(r["book_title"]))
+                if r["pages"]:
+                    s += f", pp. {esc(r['pages'])}"
+                s += "."
+            if r["publisher"]:
+                s += f" {esc(r['publisher'])}."
+            if r["isbn"]:
+                s += f" ISBN: {esc(r['isbn'])}."
+            if r["doi"]:
+                s += f" DOI: {esc(r['doi'])}"
+            out.append(s)
+        numbered(out)
 
     # ---- Software / Packages ----
-    rows = db.execute("SELECT * FROM software WHERE scientist_id = ? AND cv_included = 1 ORDER BY year DESC", (scientist_id,)).fetchall()
+    rows = q("SELECT * FROM software WHERE scientist_id = ? AND cv_included = 1 ORDER BY year DESC")
     if rows:
-        section_header(f"Software / Packages ({len(rows)})")
+        section_header(f"Software / R Packages ({len(rows)})")
+        out = []
         for r in rows:
-            story.append(Paragraph(esc(r["package_name"]), entry_title_style))
-            story.append(Paragraph(esc(r["reference"]), meta_style))
+            s = hl(esc(r["reference"])) if r["reference"] else B(esc(r["package_name"]))
+            if r["downloads"]:
+                s += f" [Downloads: {esc(r['downloads'])}]"
+            out.append(s)
+        numbered(out)
 
-    # ---- Courses Taught ----
-    rows = db.execute("SELECT * FROM courses_taught WHERE scientist_id = ? AND cv_included = 1 ORDER BY course_id ASC", (scientist_id,)).fetchall()
+    # ---- Technology / Design Patent / Copyright — grouped, one consistent line format ----
+    rows = q("SELECT * FROM technology WHERE scientist_id = ? AND cv_included = 1 ORDER BY tech_id ASC")
     if rows:
-        section_header(f"Courses Taught ({len(rows)})")
-        for r in rows:
-            story.append(Paragraph(esc(r["course_name"]), body_style))
-
-    # ---- Students Guided ----
-    rows = db.execute("SELECT * FROM students_guided WHERE scientist_id = ? AND cv_included = 1 ORDER BY start_date DESC", (scientist_id,)).fetchall()
-    if rows:
-        section_header(f"Students Guided ({len(rows)})")
-        for r in rows:
-            story.append(Paragraph(esc(r["name"]), entry_title_style))
-            date_bit = esc(r["start_date"]) + (f" &ndash; {esc(r['end_date'])}" if r["end_date"] else "")
-            story.append(Paragraph(date_bit, meta_style))
-            if r["description"]:
-                story.append(Paragraph(esc(r["description"]), body_style))
-
-    # ---- Technology / Patents ----
-    rows = db.execute("SELECT * FROM technology WHERE scientist_id = ? AND cv_included = 1 ORDER BY tech_id ASC", (scientist_id,)).fetchall()
-    if rows:
-        section_header(f"Technology / Patents / Copyright ({len(rows)})")
-        for r in rows:
-            story.append(Paragraph(f"{esc(r['authors'])} ({esc(r['year'])}). {esc(r['title'])}. [{esc(r['category'])} No. {esc(r['id_number'])}]", body_style))
+        groups = [
+            ("Patent", "Design Patent", "Patent No."),
+            ("Technology", "Technology", "Accession No."),
+            ("Copyright", "Copyright", "Registration No."),
+        ]
+        section_header(f"Technology, Patents and Copyrights ({len(rows)})")
+        known = {g[0] for g in groups}
+        for cat, heading, id_label in groups + [(None, "Other", "No.")]:
+            members = [r for r in rows if (r["category"] == cat if cat else r["category"] not in known)]
+            if not members:
+                continue
+            story.append(Paragraph(f"{esc(heading)} ({len(members)})", h3_style))
+            for n, r in enumerate(members, 1):
+                s = hl(esc(r["authors"]))
+                if r["year"]:
+                    s += f" ({esc(r['year'])})"
+                s += f". {B(esc(r['title']))}."
+                story.append(para(s, item_style, bullet=f"{n}."))
+                if r["id_number"]:
+                    story.append(para(f"{id_label} {esc(r['id_number'])}", meta_style))
 
     # ---- Popular Articles ----
-    rows = db.execute("SELECT * FROM popular_articles WHERE scientist_id = ? AND cv_included = 1 ORDER BY article_id ASC", (scientist_id,)).fetchall()
+    rows = q("SELECT * FROM popular_articles WHERE scientist_id = ? AND cv_included = 1 ORDER BY article_id ASC")
     if rows:
         section_header(f"Popular Articles ({len(rows)})")
+        out = []
         for r in rows:
-            bits = f"{esc(r['authors'])} ({esc(r['year'])}). {esc(r['title'])}. {esc(r['publication'])}"
+            s = hl(esc(r["authors"]))
+            if r["year"]:
+                s += f" ({esc(r['year'])})"
+            s += f". {esc(r['title'])}."
+            if r["publication"]:
+                s += " " + I(esc(r["publication"]))
             if r["details"]:
-                bits += f", {esc(r['details'])}"
-            story.append(Paragraph(bits, unicode_body_style))
+                s += f", {esc(r['details'])}"
+            out.append(s + ".")
+        numbered(out)
 
     # ---- Policy Papers ----
-    rows = db.execute("SELECT * FROM policy_papers WHERE scientist_id = ? AND cv_included = 1 ORDER BY paper_id ASC", (scientist_id,)).fetchall()
+    rows = q("SELECT * FROM policy_papers WHERE scientist_id = ? AND cv_included = 1 ORDER BY paper_id ASC")
     if rows:
         section_header(f"Policy Papers ({len(rows)})")
+        out = []
         for r in rows:
-            bits = f"{esc(r['authors'])} ({esc(r['year'])}). {esc(r['title'])}."
-            if r["publisher"]:
-                bits += f" {esc(r['publisher'])}."
+            s = hl(esc(r["authors"]))
+            if r["year"]:
+                s += f" ({esc(r['year'])})"
+            s += f". {esc(r['title'])}"
             if r["id_number"]:
-                bits += f" [{esc(r['id_number'])}]"
-            story.append(Paragraph(bits, body_style))
+                s += f" ({esc(r['id_number'])})"
+            s += "."
+            if r["publisher"]:
+                s += f" {esc(r['publisher'])}."
+            out.append(s)
+        numbered(out)
 
     # ---- Manuals ----
-    rows = db.execute("SELECT * FROM manuals WHERE scientist_id = ? AND cv_included = 1 ORDER BY manual_id ASC", (scientist_id,)).fetchall()
+    rows = q("SELECT * FROM manuals WHERE scientist_id = ? AND cv_included = 1 ORDER BY manual_id ASC")
     if rows:
-        section_header(f"Manuals ({len(rows)})")
+        section_header(f"Training Manuals ({len(rows)})")
+        out = []
         for r in rows:
-            bits = f"{esc(r['authors'])} ({esc(r['year'])}). {esc(r['title'])}."
+            s = hl(esc(r["authors"]))
+            if r["year"]:
+                s += f" ({esc(r['year'])})"
+            s += f". {esc(r['title'])}."
             if r["publisher"]:
-                bits += f" {esc(r['publisher'])}."
-            story.append(Paragraph(bits, unicode_body_style))
+                s += f" {esc(r['publisher'])}."
+            out.append(s)
+        numbered(out)
+
+    # ---- Courses Taught ----
+    rows = q("SELECT * FROM courses_taught WHERE scientist_id = ? AND cv_included = 1 ORDER BY course_id ASC")
+    if rows:
+        section_header(f"Courses Taught ({len(rows)})")
+        numbered([esc(r["course_name"]) for r in rows])
+
+    # ---- Students Guided ----
+    rows = q("SELECT * FROM students_guided WHERE scientist_id = ? AND cv_included = 1 ORDER BY start_date DESC")
+    if rows:
+        section_header(f"Students Guided ({len(rows)})")
+        out = []
+        for r in rows:
+            s = B(esc(r["name"]))
+            if r["student_type"]:
+                s += f" ({esc(r['student_type'])})"
+            period = " – ".join(x for x in (esc(r["start_date"]), esc(r["end_date"])) if x)
+            if period:
+                s += f", {period}"
+            s += "."
+            if r["description"]:
+                s += f" {esc(r['description'])}"
+            out.append(s)
+        numbered(out)
 
     # ---- Conference Papers Presented ----
-    rows = db.execute("SELECT * FROM conference_papers WHERE scientist_id = ? AND cv_included = 1 ORDER BY paper_id ASC", (scientist_id,)).fetchall()
+    rows = q("SELECT * FROM conference_papers WHERE scientist_id = ? AND cv_included = 1 ORDER BY paper_id ASC")
     if rows:
-        section_header(f"Conference Papers Presented ({len(rows)})")
+        section_header(f"Papers Presented in Conferences ({len(rows)})")
+        out = []
         for r in rows:
-            bits = f"{esc(r['authors'])} ({esc(r['year'])}). {esc(r['title'])}."
+            s = hl(esc(r["authors"]))
+            if r["year"]:
+                s += f" ({esc(r['year'])})"
+            s += f". “{esc(r['title'])}”."
             if r["details"]:
-                bits += f" {esc(r['details'])}"
-            story.append(Paragraph(bits, body_style))
+                s += f" {esc(r['details'])}."
+            out.append(s)
+        numbered(out)
 
-    # ---- Training / Conference Attended ----
-    rows = db.execute("SELECT * FROM trainings_attended WHERE scientist_id = ? AND cv_included = 1 ORDER BY entry_id ASC", (scientist_id,)).fetchall()
-    if rows:
-        section_header(f"Training / Conference Attended ({len(rows)})")
-        for r in rows:
-            story.append(Paragraph(esc(r["description"]), body_style))
-
-    # ---- Training / Conference Organised ----
-    rows = db.execute("SELECT * FROM trainings_organised WHERE scientist_id = ? AND cv_included = 1 ORDER BY entry_id ASC", (scientist_id,)).fetchall()
-    if rows:
-        section_header(f"Training / Conference Organised ({len(rows)})")
-        for r in rows:
-            story.append(Paragraph(esc(r["description"]), unicode_body_style))
-
-    # ---- Invited Talks ----
-    rows = db.execute("SELECT * FROM invited_talks WHERE scientist_id = ? AND cv_included = 1 ORDER BY talk_id ASC", (scientist_id,)).fetchall()
-    if rows:
-        section_header(f"Invited Talks ({len(rows)})")
-        for r in rows:
-            story.append(Paragraph(esc(r["description"]), unicode_body_style))
+    # ---- Training / Conference Attended / Organised, Invited Talks ----
+    for table, id_col, heading in (
+        ("trainings_attended", "entry_id", "Training / Conferences Attended"),
+        ("trainings_organised", "entry_id", "Training / Conferences Organised"),
+        ("invited_talks", "talk_id", "Invited Talks / Lectures Delivered"),
+    ):
+        rows = q(f"SELECT * FROM {table} WHERE scientist_id = ? AND cv_included = 1 ORDER BY {id_col} ASC")
+        if rows:
+            section_header(f"{heading} ({len(rows)})")
+            numbered([hl(esc(r["description"])) for r in rows])
 
     # ---- Custom (user-created) tabs ----
-    custom_tabs = db.execute("SELECT * FROM custom_tabs WHERE scientist_id = ? ORDER BY sort_order ASC", (scientist_id,)).fetchall()
-    for tab in custom_tabs:
+    def entry_line(r):
+        s = B(esc(r["title"]))
+        if r["year"]:
+            s += f" ({esc(r['year'])})"
+        if r["description"]:
+            s += f". {hl(esc(r['description']))}"
+        return s
+
+    for tab in db.execute("SELECT * FROM custom_tabs WHERE scientist_id = ? ORDER BY sort_order ASC", (scientist_id,)).fetchall():
         subtabs = db.execute("SELECT * FROM custom_subtabs WHERE tab_id = ? ORDER BY sort_order ASC", (tab["tab_id"],)).fetchall()
-
-        def entry_line(r):
-            bits = esc(r["title"])
-            if r["year"]:
-                bits += f" ({esc(r['year'])})"
-            if r["description"]:
-                bits += f". {esc(r['description'])}"
-            return bits
-
         if subtabs:
-            any_rows = False
-            group_story = []
+            grouped = []
             for sub in subtabs:
                 rows = db.execute(
-                    "SELECT * FROM custom_entries WHERE subtab_id = ? AND cv_included = 1 ORDER BY sort_order ASC", (sub["subtab_id"],)
+                    "SELECT * FROM custom_entries WHERE subtab_id = ? AND cv_included = 1 ORDER BY sort_order ASC",
+                    (sub["subtab_id"],),
                 ).fetchall()
                 if rows:
-                    any_rows = True
-                    group_story.append(Paragraph(f"<b>{esc(sub['name'])}</b>", entry_title_style))
-                    for r in rows:
-                        group_story.append(Paragraph(entry_line(r), unicode_body_style))
-            if any_rows:
+                    grouped.append((sub, rows))
+            if grouped:
                 section_header(tab["name"])
-                story.extend(group_story)
+                for sub, rows in grouped:
+                    story.append(Paragraph(f"{esc(sub['name'])} ({len(rows)})", h3_style))
+                    numbered([entry_line(r) for r in rows])
         else:
             rows = db.execute(
-                "SELECT * FROM custom_entries WHERE tab_id = ? AND subtab_id IS NULL AND cv_included = 1 ORDER BY sort_order ASC", (tab["tab_id"],)
+                "SELECT * FROM custom_entries WHERE tab_id = ? AND subtab_id IS NULL AND cv_included = 1 ORDER BY sort_order ASC",
+                (tab["tab_id"],),
             ).fetchall()
             if rows:
                 section_header(f"{tab['name']} ({len(rows)})")
-                for r in rows:
-                    story.append(Paragraph(entry_line(r), unicode_body_style))
+                numbered([entry_line(r) for r in rows])
 
-    doc.build(story)
+    footer_name = p.get("name", "")
+
+    def draw_footer(canvas, _doc):
+        canvas.saveState()
+        canvas.setStrokeColor(rule)
+        canvas.setLineWidth(0.5)
+        canvas.line(18 * mm, 12.5 * mm, A4[0] - 18 * mm, 12.5 * mm)
+        canvas.setFont("Helvetica", 7.8)
+        canvas.setFillColor(slate)
+        if _cp1252_safe(footer_name):
+            canvas.drawString(18 * mm, 8.5 * mm, f"{footer_name} — Curriculum Vitae")
+        canvas.drawRightString(A4[0] - 18 * mm, 8.5 * mm, f"Page {canvas.getPageNumber()}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
     buf.seek(0)
     return buf
 

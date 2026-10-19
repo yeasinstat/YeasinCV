@@ -42,6 +42,58 @@ format works if you also update the `src="yeasin-photo.png"` line in
 - **Hide/Show**: admins can hide a paper from public visitors without deleting it (a "Hidden" badge shows it to you, but it's invisible to everyone else). Toggle via the "Hide"/"Show" button on each paper.
 - **Journal Scores (Excel-linked IF/NAAS/JID)**: as admin, click **"Upload Journal Scores"**, upload an `.xlsx` with columns `Journal Name, JID, Impact Factor, NAAS Score, Quartile, Year` — every paper's Impact Factor/Quartile is matched and refreshed by journal name automatically. Re-upload next year and everything updates in one shot.
 
+## Proof documents, Gallery and Google Drive
+
+**Proof documents** — every record (research papers, awards, projects, other
+publications, training, technology, custom tabs) has a **Proof** button when
+logged in. Attach PDFs, images, Word/Excel/PowerPoint files (25 MB each). The
+button shows a count, e.g. *Proof (2)*. Proofs are private: only the admin and
+that person's own login can see them.
+
+**Gallery** — the last tab. Add photos with captions, hide/show, delete,
+drag to reorder, click a photo to view it full-screen. Each person has their
+own gallery. Large phone photos are resized automatically.
+
+**Where files are stored** — never inside this repository, so the app does not
+grow. When Google Drive is connected they go to
+`My Drive › ARIMS Documents › <person's name> › <section>`. Until then they are
+kept in `backend/uploads/` on the server (git-ignored).
+
+### Connecting Google Drive (one time, ~10 minutes)
+
+The website never stores a Google password. It uses Google's official sign-in
+with the narrow `drive.file` permission: it can only see files and folders it
+created itself.
+
+1. Open https://console.cloud.google.com/ signed in as the Google account that
+   should hold the files, and create a project (e.g. "ARIMS").
+2. **APIs & Services › Library** → enable **Google Drive API**.
+3. **OAuth consent screen** → *External*, app name + your email. Then under
+   **Audience** click **Publish app** (in "Testing" mode Google cuts the
+   connection every 7 days).
+4. **Credentials/Clients › Create OAuth client › Web application**. Under
+   **Authorized redirect URIs** add, for every address you open the site with:
+   - `https://yeasincv.onrender.com/api/drive/oauth/callback`
+   - your own server's address + `/api/drive/oauth/callback`
+   (Log in as admin → **Google Drive** shows the exact address to copy.)
+5. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` on the server
+   (Render → Environment; Ubuntu → `Environment=` lines in the systemd service),
+   restart, then log in as admin → **Google Drive** → **Connect Google Drive**.
+6. **Render only:** Render wipes its disk on every deploy. After connecting,
+   copy the token shown on the confirmation page into Render's Environment as
+   `GOOGLE_REFRESH_TOKEN` so the connection survives redeploys.
+
+Optional: `GOOGLE_DRIVE_ROOT_FOLDER` changes the top folder name (default
+`ARIMS Documents`).
+
+## CV formatting
+
+The downloaded CV automatically bolds the person's own name in every author
+list (matching initials, so *Paul, R. K.* is bolded on Ranjit's CV but
+*Paul, A. K.* is not), italicises journal and book titles, and uses justified,
+numbered entries with hanging indents. Hindi/Devanagari text is shaped
+correctly (needs `reportlab>=5` and `uharfbuzz`, both in `requirements.txt`).
+
 ## What's included
 
 ```

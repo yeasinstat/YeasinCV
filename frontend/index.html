@@ -32,6 +32,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
     <button class="btn-ghost hidden" id="resetScoresBtn">Reset Journal Scores</button>
     <button class="btn-ghost hidden" id="uploadNaasBtn">Upload NAAS Scores</button>
     <button class="btn-ghost hidden" id="uploadJcrBtn">Upload JCR Impact Factors</button>
+    <button class="btn-ghost hidden" id="driveBtn">Google Drive</button>
     <button class="btn-ghost" id="userLoginBtn">User Login</button>
     <button class="btn-ghost" id="adminBtn">Admin</button>
   </div>
@@ -50,6 +51,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
   <button class="nav-tab" data-section="students-guided">Students Guided</button>
   <button class="nav-tab" data-section="training">Training</button>
   <button class="nav-tab" data-section="technology">Technology</button>
+  <button class="nav-tab" data-section="gallery" id="galleryNavTab">Gallery</button>
 </nav>
 
 <main>
@@ -265,6 +267,17 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
       <button class="btn-ghost hidden add-record-btn" data-type="technology">+ Add Technology/Patent</button>
     </div>
     <div class="record-list" id="technologyList"></div>
+  </section>
+
+  <!-- ============ GALLERY ============ -->
+  <section class="section-panel hidden" id="section-gallery">
+    <div class="section-header">
+      <div class="section-heading-group">
+        <h2>Gallery</h2>
+      </div>
+      <button class="btn-ghost hidden" id="addGalleryPhotoBtn">+ Add Photo</button>
+    </div>
+    <div class="gallery-grid" id="galleryGrid"></div>
   </section>
 
   <!-- ============ TRAINING ============ -->
@@ -528,6 +541,62 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
     <button type="button" class="btn-secondary" id="manageLoginRemove">Remove Login</button>
     <p class="modal-error" id="manageLoginError"></p>
     <p class="modal-success" id="manageLoginSuccess"></p>
+  </div>
+</div>
+
+<!-- Proof documents modal -->
+<div class="modal-backdrop" id="proofModalBackdrop">
+  <div class="modal modal-wide">
+    <button class="modal-close" data-close="proofModalBackdrop">&times;</button>
+    <h2>Proof Documents</h2>
+    <p class="modal-hint" id="proofRecordTitle"></p>
+    <p class="storage-note" id="proofStorageNote"></p>
+    <ul class="proof-list" id="proofList"></ul>
+    <label for="proofFile">Add documents (PDF, image, Word, Excel, PowerPoint &mdash; up to 25&nbsp;MB each)</label>
+    <input type="file" id="proofFile" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip">
+    <button class="btn-primary" id="proofUploadBtn">Upload</button>
+    <p class="modal-error" id="proofError"></p>
+    <p class="modal-success" id="proofSuccess"></p>
+  </div>
+</div>
+
+<!-- Gallery photo add/edit modal -->
+<div class="modal-backdrop" id="galleryModalBackdrop">
+  <div class="modal">
+    <button class="modal-close" data-close="galleryModalBackdrop">&times;</button>
+    <h2 id="galleryModalTitle">Add Photo</h2>
+    <div id="galleryFileWrap">
+      <label for="galleryFile">Photo(s) &mdash; JPG, PNG or WEBP</label>
+      <input type="file" id="galleryFile" multiple accept=".jpg,.jpeg,.png,.webp">
+      <p class="modal-hint modal-hint-tight">Large phone photos are resized automatically so the page stays fast.</p>
+    </div>
+    <label for="galleryCaption">Caption (optional)</label>
+    <input id="galleryCaption" placeholder="e.g. 75th ISAS Annual Conference, Pusa, 2025">
+    <button class="btn-primary" id="gallerySubmit">Save</button>
+    <p class="modal-error" id="galleryError"></p>
+  </div>
+</div>
+
+<!-- Gallery photo viewer -->
+<div class="lightbox" id="lightbox" aria-hidden="true">
+  <button class="lightbox-close" id="lightboxClose" aria-label="Close">&times;</button>
+  <button class="lightbox-nav lightbox-prev" id="lightboxPrev" aria-label="Previous photo">&#8249;</button>
+  <figure class="lightbox-figure">
+    <img id="lightboxImg" alt="">
+    <figcaption id="lightboxCaption"></figcaption>
+  </figure>
+  <button class="lightbox-nav lightbox-next" id="lightboxNext" aria-label="Next photo">&#8250;</button>
+</div>
+
+<!-- Google Drive connection modal -->
+<div class="modal-backdrop" id="driveModalBackdrop">
+  <div class="modal modal-wide">
+    <button class="modal-close" data-close="driveModalBackdrop">&times;</button>
+    <h2>Google Drive</h2>
+    <div id="driveStatusBody" class="drive-status-body"></div>
+    <button class="btn-primary hidden" id="driveConnectBtn">Connect Google Drive</button>
+    <button type="button" class="btn-secondary hidden" id="driveDisconnectBtn">Disconnect</button>
+    <p class="modal-error" id="driveError"></p>
   </div>
 </div>
 

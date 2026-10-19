@@ -649,6 +649,7 @@ function loadSection(section) {
   if (section === "personal-details") { renderProfileBlocks("personalDetailsBlocks", PERSONAL_BLOCK_ORDER); return; }
   if (section === "book-chapters") { loadOtherPublications(); return; }
   if (section === "training") { loadTraining(); return; }
+  if (section === "gallery") { loadGallery(); return; }
   if (section.startsWith("custom-")) { loadCustomTabSection(section.replace("custom-", "")); return; }
   const map = {
     "awards": { endpoint: "/awards", render: renderAwards, container: "awardsList" },
@@ -684,7 +685,7 @@ async function loadCustomTabs() {
     btn.dataset.section = `custom-${tab.tab_id}`;
     btn.dataset.customTab = "1";
     btn.textContent = tab.name;
-    $("sectionNav").appendChild(btn);
+    $("sectionNav").insertBefore(btn, $("galleryNavTab"));
 
     const panel = document.createElement("section");
     panel.className = "section-panel hidden";
@@ -768,6 +769,7 @@ function renderCustomEntries(container, tabId, subtabId, items) {
           <input type="checkbox" data-custom-cv="${it.entry_id}" ${it.cv_included ? "checked" : ""}>
         </label>
         <button class="icon-btn" data-custom-edit="${it.entry_id}">Edit</button>
+        ${proofButtonHtml("custom-entries", it.entry_id)}
         <button class="icon-btn" data-custom-toggle-hidden="${it.entry_id}">${it.hidden ? "Show" : "Hide"}</button>
         <button class="icon-btn danger" data-custom-delete="${it.entry_id}">Delete</button>
       </div>
@@ -1097,6 +1099,7 @@ function renderPapers(papers) {
           </label>
           <button class="select-star-btn ${p.selected ? "is-selected" : ""}" data-toggle-selected="${p.publication_id}" title="${p.selected ? "Remove from Selected" : "Add to Selected"}">&#9733;</button>
           <button class="icon-btn" data-edit="${p.publication_id}">Edit</button>
+          ${proofButtonHtml("papers", p.publication_id)}
           <button class="icon-btn" data-toggle-hidden="${p.publication_id}">${p.hidden ? "Show" : "Hide"}</button>
           <button class="icon-btn danger" data-delete="${p.publication_id}">Delete</button>
         </div>
@@ -1257,6 +1260,7 @@ function onAuthChange() {
   $("updateDownloadsBtn").classList.toggle("hidden", !visible);
   $("downloadCvBtn").classList.toggle("hidden", !visible);
   $("addNavTabBtn").classList.toggle("hidden", !visible);
+  $("addGalleryPhotoBtn").classList.toggle("hidden", !visible);
   document.querySelectorAll(".add-record-btn").forEach(b => b.classList.toggle("hidden", !visible));
   document.querySelectorAll(".delete-tab-btn").forEach(b => b.classList.toggle("hidden", !visible));
   document.querySelectorAll(".section-header-tick").forEach(b => b.classList.toggle("hidden", !visible));
@@ -1270,6 +1274,7 @@ function onAuthChange() {
   $("addUserBtn").classList.toggle("hidden", !isSuperAdmin);
   $("manageLoginBtn").classList.toggle("hidden", !isSuperAdmin);
   $("deleteUserBtn").classList.toggle("hidden", !isSuperAdmin);
+  $("driveBtn").classList.toggle("hidden", !isSuperAdmin);
 
   // A scientist's own login can only ever view/edit their own profile —
   // lock the switcher so they can't even try to select someone else's.
@@ -1282,6 +1287,7 @@ function onAuthChange() {
   loadSection(currentSection);
   loadFilterOptions();
   loadStats();
+  loadProofCounts();
 }
 
 document.querySelectorAll(".tab").forEach(tab => {
@@ -1767,6 +1773,7 @@ function recordActionsHtml(type, id, hidden, cvIncluded) {
         <input type="checkbox" data-record-cv="${type}" data-id="${id}" ${cvIncluded ? "checked" : ""}>
       </label>
       <button class="icon-btn" data-record-edit="${type}" data-id="${id}">Edit</button>
+      ${proofButtonHtml(type, id)}
       <button class="icon-btn" data-record-toggle-hidden="${type}" data-id="${id}">${hidden ? "Show" : "Hide"}</button>
       <button class="icon-btn danger" data-record-delete="${type}" data-id="${id}">Delete</button>
     </div>`;
@@ -2107,6 +2114,7 @@ $("scientistSwitcher").addEventListener("change", async (e) => {
 async function reloadForScientist() {
   await loadProfile();
   await loadCustomTabs();
+  loadProofCounts();
   await loadFilterOptions();
   await loadStats();
   if (currentSection === "publications") {
@@ -2115,6 +2123,388 @@ async function reloadForScientist() {
     loadSection(currentSection);
   }
 }
+
+// ---------------- Proof documents (stored in Google Drive, or on the server until Drive is connected) ----------------
+let proofCounts = {};
+let driveState = null;
+let proofTarget = null;
+
+function proofButtonHtml(type, id) {
+  const n = (proofCounts[type] || {})[String(id)] || 0;
+  return `<button class="icon-btn proof-btn${n ? " has-proof" : ""}" data-proof-type="${type}" data-proof-id="${id}" title="Proof documents">${n ? `Proof (${n})` : "Proof"}</button>`;
+}
+
+function refreshProofBadges() {
+  document.querySelectorAll(".proof-btn").forEach(b => {
+    const n = (proofCounts[b.dataset.proofType] || {})[b.dataset.proofId] || 0;
+    b.textContent = n ? `Proof (${n})` : "Proof";
+    b.classList.toggle("has-proof", !!n);
+  });
+}
+
+async function loadProofCounts() {
+  if (!authToken) { proofCounts = {}; return; }
+  try { proofCounts = await api("/proofs/counts"); } catch { proofCounts = {}; }
+  refreshProofBadges();
+}
+
+function formatBytes(n) {
+  if (!n) return "0 KB";
+  return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+}
+
+function fileKind(name) {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  if (ext === "pdf") return "PDF";
+  if (["png", "jpg", "jpeg", "webp"].includes(ext)) return "IMG";
+  if (["doc", "docx"].includes(ext)) return "DOC";
+  if (["xls", "xlsx"].includes(ext)) return "XLS";
+  if (["ppt", "pptx"].includes(ext)) return "PPT";
+  return ext.toUpperCase().slice(0, 3) || "FILE";
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest(".proof-btn");
+  if (!b) return;
+  e.preventDefault();
+  const card = b.closest(".paper-entry, .record-entry");
+  const t = card && card.querySelector(".paper-title, .record-title, .record-meta");
+  openProofModal(b.dataset.proofType, b.dataset.proofId, t ? t.textContent.trim() : "");
+});
+
+async function openProofModal(type, id, title) {
+  proofTarget = { type, id };
+  $("proofRecordTitle").textContent = title;
+  $("proofError").textContent = "";
+  $("proofSuccess").textContent = "";
+  $("proofFile").value = "";
+  openModal("proofModalBackdrop");
+  renderStorageNote();
+  await loadProofList();
+}
+
+async function renderStorageNote() {
+  const el = $("proofStorageNote");
+  try { driveState = await api("/drive/status"); } catch { driveState = null; }
+  if (driveState && driveState.connected) {
+    el.className = "storage-note ok";
+    el.innerHTML = `Saved to Google Drive${driveState.email ? ` (${escapeHtml(driveState.email)})` : ""} &rarr; <b>${escapeHtml(driveState.root_folder)}</b> &rsaquo; person &rsaquo; section`;
+  } else {
+    el.className = "storage-note warn";
+    el.innerHTML = `Google Drive is not connected yet, so files are kept on this server for now.` +
+      (driveState && driveState.is_super_admin ? ` Use <b>Google Drive</b> in the top bar to connect it.` : "");
+  }
+}
+
+async function loadProofList() {
+  const ul = $("proofList");
+  ul.innerHTML = `<li class="proof-empty">Loading&hellip;</li>`;
+  try {
+    const items = await api(`/proofs?record_type=${encodeURIComponent(proofTarget.type)}&record_id=${encodeURIComponent(proofTarget.id)}`);
+    ul.innerHTML = items.length ? items.map(p => `
+      <li class="proof-item">
+        <span class="proof-kind">${fileKind(p.file_name)}</span>
+        <span class="proof-name">${escapeHtml(p.file_name)}
+          <small>${formatBytes(p.size_bytes)} &middot; ${p.storage === "drive" ? "Google Drive" : "Server"} &middot; ${escapeHtml((p.created_at || "").slice(0, 10))}</small>
+        </span>
+        <button class="icon-btn" data-proof-open="${p.proof_id}" data-name="${escapeHtml(p.file_name)}">Open</button>
+        <button class="icon-btn danger" data-proof-del="${p.proof_id}">Delete</button>
+      </li>`).join("") : `<li class="proof-empty">No proof documents attached yet.</li>`;
+    ul.querySelectorAll("[data-proof-open]").forEach(btn => btn.addEventListener("click", () => openProofFile(btn.dataset.proofOpen, btn.dataset.name)));
+    ul.querySelectorAll("[data-proof-del]").forEach(btn => btn.addEventListener("click", async () => {
+      if (!confirm("Delete this proof document? (If it is in Google Drive it goes to Drive's Trash, where it can be restored for 30 days.)")) return;
+      try {
+        await api(`/proofs/${btn.dataset.proofDel}`, { method: "DELETE" });
+        await loadProofList();
+        loadProofCounts();
+      } catch (e) { $("proofError").textContent = e.message; }
+    }));
+  } catch (e) {
+    ul.innerHTML = `<li class="proof-empty">${escapeHtml(e.message)}</li>`;
+  }
+}
+
+async function openProofFile(id, name) {
+  $("proofError").textContent = "";
+  const viewable = /\.(pdf|png|jpe?g|webp)$/i.test(name);
+  const win = viewable ? window.open("", "_blank") : null; // opened now, while the click still counts, so pop-up blockers allow it
+  try {
+    const res = await fetch(`${API_BASE}/proofs/${id}/file`, { headers: { Authorization: "Bearer " + authToken } });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error || "Could not open this file.");
+    }
+    const url = URL.createObjectURL(await res.blob());
+    if (win) {
+      win.location = url;
+    } else {
+      const a = document.createElement("a");
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+  } catch (e) {
+    if (win) win.close();
+    $("proofError").textContent = e.message;
+  }
+}
+
+$("proofUploadBtn").addEventListener("click", async () => {
+  const files = [...$("proofFile").files];
+  $("proofError").textContent = "";
+  $("proofSuccess").textContent = "";
+  if (!files.length) { $("proofError").textContent = "Choose at least one file first."; return; }
+  const btn = $("proofUploadBtn");
+  btn.disabled = true;
+  let done = 0, lastMsg = "";
+  try {
+    for (const f of files) {
+      btn.textContent = files.length > 1 ? `Uploading ${done + 1} of ${files.length}…` : "Uploading…";
+      const fd = new FormData();
+      fd.append("record_type", proofTarget.type);
+      fd.append("record_id", proofTarget.id);
+      fd.append("file", f);
+      lastMsg = (await apiUpload("/proofs", fd)).message;
+      done++;
+    }
+    $("proofSuccess").textContent = files.length > 1 ? `${done} files uploaded. ${lastMsg}` : lastMsg;
+    $("proofFile").value = "";
+  } catch (e) {
+    $("proofError").textContent = (done ? `${done} uploaded, then: ` : "") + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Upload";
+    await loadProofList();
+    loadProofCounts();
+  }
+});
+
+// ---------------- Gallery ----------------
+let galleryItems = [];
+let galleryEditId = null;
+let lightboxIndex = 0;
+const galleryBlobUrls = {}; // hidden photos are only served with the admin token, so they're fetched as blobs
+
+function galleryImgSrc(g) {
+  return g.hidden ? (galleryBlobUrls[g.photo_id] || "") : g.image_url;
+}
+
+async function loadGallery() {
+  const grid = $("galleryGrid");
+  const isAdmin = !!authToken;
+  try {
+    galleryItems = await api("/gallery");
+  } catch (e) {
+    grid.innerHTML = `<div class="empty-state">Could not load the gallery.</div>`;
+    return;
+  }
+  if (!galleryItems.length) {
+    grid.innerHTML = `<div class="empty-state">${isAdmin ? "No photos yet &mdash; use &ldquo;+ Add Photo&rdquo; to add memories." : "No photos have been added yet."}</div>`;
+    return;
+  }
+  grid.innerHTML = galleryItems.map((g, i) => `
+    <figure class="gallery-item${g.hidden ? " is-hidden" : ""}" data-photo-id="${g.photo_id}">
+      <button class="gallery-thumb" data-gallery-open="${i}" aria-label="View photo${g.caption ? ": " + escapeHtml(g.caption) : ""}">
+        <img src="${galleryImgSrc(g)}" data-photo-img="${g.photo_id}" alt="${escapeHtml(g.caption || "Gallery photo")}" loading="lazy">
+      </button>
+      ${isAdmin ? `<span class="gallery-drag" title="Drag to reorder">&#10303;</span>` : ""}
+      ${g.hidden ? `<span class="tag tag-hidden gallery-hidden-tag">Hidden</span>` : ""}
+      ${g.caption ? `<figcaption>${escapeHtml(g.caption)}</figcaption>` : ""}
+      ${isAdmin ? `<div class="gallery-actions">
+        <button class="icon-btn" data-gallery-edit="${g.photo_id}">Edit</button>
+        <button class="icon-btn" data-gallery-hide="${g.photo_id}">${g.hidden ? "Show" : "Hide"}</button>
+        <button class="icon-btn danger" data-gallery-del="${g.photo_id}">Delete</button>
+      </div>` : ""}
+    </figure>`).join("");
+
+  galleryItems.filter(g => g.hidden && !galleryBlobUrls[g.photo_id]).forEach(async g => {
+    try {
+      const res = await fetch(g.image_url, { headers: { Authorization: "Bearer " + authToken } });
+      if (!res.ok) return;
+      galleryBlobUrls[g.photo_id] = URL.createObjectURL(await res.blob());
+      const img = grid.querySelector(`[data-photo-img="${g.photo_id}"]`);
+      if (img) img.src = galleryBlobUrls[g.photo_id];
+    } catch { /* leave blank */ }
+  });
+
+  grid.querySelectorAll("[data-gallery-open]").forEach(b => b.addEventListener("click", () => openLightbox(parseInt(b.dataset.galleryOpen, 10))));
+  grid.querySelectorAll("[data-gallery-edit]").forEach(b => b.addEventListener("click", () => openGalleryModal(parseInt(b.dataset.galleryEdit, 10))));
+  grid.querySelectorAll("[data-gallery-hide]").forEach(b => b.addEventListener("click", async () => {
+    try { await api(`/gallery/${b.dataset.galleryHide}/toggle-hidden`, { method: "POST" }); loadGallery(); } catch (e) { alert(e.message); }
+  }));
+  grid.querySelectorAll("[data-gallery-del]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Are you sure you want to delete this photo?")) return;
+    try { await api(`/gallery/${b.dataset.galleryDel}`, { method: "DELETE" }); loadGallery(); } catch (e) { alert(e.message); }
+  }));
+  if (isAdmin && window.Sortable) {
+    new Sortable(grid, {
+      animation: 150, handle: ".gallery-drag", ghostClass: "sortable-ghost",
+      onEnd: async () => {
+        const order = [...grid.querySelectorAll(".gallery-item")].map(el => parseInt(el.dataset.photoId, 10));
+        try { await api("/gallery/reorder", { method: "PUT", body: JSON.stringify({ order }) }); } catch (e) { alert(e.message); }
+        loadGallery();
+      },
+    });
+  }
+}
+
+function openGalleryModal(photoId) {
+  galleryEditId = photoId;
+  $("galleryError").textContent = "";
+  $("galleryFile").value = "";
+  const editing = photoId !== null;
+  $("galleryModalTitle").textContent = editing ? "Edit Caption" : "Add Photo";
+  $("galleryFileWrap").classList.toggle("hidden", editing);
+  const g = editing ? galleryItems.find(x => x.photo_id === photoId) : null;
+  $("galleryCaption").value = g ? (g.caption || "") : "";
+  openModal("galleryModalBackdrop");
+}
+
+$("addGalleryPhotoBtn").addEventListener("click", () => openGalleryModal(null));
+
+$("gallerySubmit").addEventListener("click", async () => {
+  $("galleryError").textContent = "";
+  const btn = $("gallerySubmit");
+  const caption = $("galleryCaption").value.trim();
+  if (galleryEditId !== null) {
+    try {
+      await api(`/gallery/${galleryEditId}`, { method: "PUT", body: JSON.stringify({ caption }) });
+      closeModal("galleryModalBackdrop");
+      loadGallery();
+    } catch (e) { $("galleryError").textContent = e.message; }
+    return;
+  }
+  const files = [...$("galleryFile").files];
+  if (!files.length) { $("galleryError").textContent = "Choose a photo first."; return; }
+  btn.disabled = true;
+  let done = 0;
+  try {
+    for (const f of files) {
+      btn.textContent = files.length > 1 ? `Uploading ${done + 1} of ${files.length}…` : "Uploading…";
+      const fd = new FormData();
+      fd.append("caption", caption);
+      fd.append("file", f);
+      await apiUpload(`/gallery?scientist_id=${currentScientistId}`, fd);
+      done++;
+    }
+    closeModal("galleryModalBackdrop");
+  } catch (e) {
+    $("galleryError").textContent = (done ? `${done} uploaded, then: ` : "") + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Save";
+    loadGallery();
+  }
+});
+
+function showLightbox(i) {
+  lightboxIndex = (i + galleryItems.length) % galleryItems.length;
+  const g = galleryItems[lightboxIndex];
+  $("lightboxImg").src = galleryImgSrc(g);
+  $("lightboxImg").alt = g.caption || "Gallery photo";
+  $("lightboxCaption").textContent = g.caption || "";
+  const multi = galleryItems.length > 1;
+  $("lightboxPrev").classList.toggle("hidden", !multi);
+  $("lightboxNext").classList.toggle("hidden", !multi);
+}
+
+function openLightbox(i) {
+  showLightbox(i);
+  $("lightbox").classList.add("open");
+  $("lightbox").setAttribute("aria-hidden", "false");
+  document.body.style.overflow = "hidden";
+}
+
+function closeLightbox() {
+  $("lightbox").classList.remove("open");
+  $("lightbox").setAttribute("aria-hidden", "true");
+  document.body.style.overflow = "";
+}
+
+$("lightboxClose").addEventListener("click", closeLightbox);
+$("lightboxPrev").addEventListener("click", () => showLightbox(lightboxIndex - 1));
+$("lightboxNext").addEventListener("click", () => showLightbox(lightboxIndex + 1));
+$("lightbox").addEventListener("click", (e) => { if (e.target === $("lightbox")) closeLightbox(); });
+document.addEventListener("keydown", (e) => {
+  if (!$("lightbox").classList.contains("open")) return;
+  if (e.key === "Escape") closeLightbox();
+  if (e.key === "ArrowLeft") showLightbox(lightboxIndex - 1);
+  if (e.key === "ArrowRight") showLightbox(lightboxIndex + 1);
+});
+
+// ---------------- Google Drive connection (super admin) ----------------
+$("driveBtn").addEventListener("click", () => { openModal("driveModalBackdrop"); refreshDriveModal(); });
+
+async function refreshDriveModal() {
+  const body = $("driveStatusBody");
+  $("driveError").textContent = "";
+  $("driveConnectBtn").classList.add("hidden");
+  $("driveDisconnectBtn").classList.add("hidden");
+  body.innerHTML = "Checking&hellip;";
+  try { driveState = await api("/drive/status"); } catch (e) { body.textContent = e.message; return; }
+  const s = driveState;
+  if (s.connected) {
+    body.innerHTML = `
+      <p class="storage-note ok">Connected${s.email ? ` to <b>${escapeHtml(s.email)}</b>` : ""}.</p>
+      <p>Proof documents and Gallery photos are saved in <b>My Drive &rsaquo; ${escapeHtml(s.root_folder)} &rsaquo; <i>person's name</i> &rsaquo; <i>section</i></b>
+      (for example <i>${escapeHtml(s.root_folder)} &rsaquo; Dr. Md Yeasin &rsaquo; Research Papers</i>). Nothing is stored in the website's code, so it never grows in size.</p>
+      ${s.source === "env" ? `<p class="modal-hint">This connection is set by the <code>GOOGLE_REFRESH_TOKEN</code> setting on the server.</p>` : ""}`;
+    if (s.source !== "env") $("driveDisconnectBtn").classList.remove("hidden");
+    return;
+  }
+  if (s.client_configured) {
+    body.innerHTML = `
+      <p class="storage-note warn">Not connected yet &mdash; uploads are kept on this server until you connect.</p>
+      <p>Click <b>Connect Google Drive</b>, sign in with the Google account that should hold the files, and allow access.
+      The website only gets access to files and folders it creates itself &mdash; not the rest of your Drive. No password is stored.</p>`;
+    $("driveConnectBtn").classList.remove("hidden");
+    return;
+  }
+  body.innerHTML = `
+    <p class="storage-note warn">One-time setup needed (about 10 minutes). Until then, uploads are kept on this server.</p>
+    <ol class="drive-steps">
+      <li>Open <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>, signed in as the Google account that should store the files, and create a project (e.g. &ldquo;ARIMS&rdquo;).</li>
+      <li><b>APIs &amp; Services &rsaquo; Library</b>: search for and enable <b>Google Drive API</b>.</li>
+      <li><b>OAuth consent screen</b>: choose <b>External</b>, enter an app name and your email. Then, under <b>Audience</b>, click <b>Publish app</b> &mdash; in &ldquo;Testing&rdquo; mode Google cuts the connection every 7 days.</li>
+      <li><b>Credentials / Clients &rsaquo; Create OAuth client &rsaquo; Web application</b>. Under <b>Authorized redirect URIs</b> add exactly:<br>
+        <code class="copy-code" id="driveRedirectUri">${escapeHtml(s.redirect_uri)}</code>
+        <button type="button" class="icon-btn" id="copyRedirectBtn">Copy</button><br>
+        <small>Add one line like this for each address you open the site with (e.g. your Render address and your own server address).</small></li>
+      <li>Put the <b>Client ID</b> and <b>Client secret</b> into the server settings as <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>, restart the website, then come back here and click <b>Connect Google Drive</b>.</li>
+    </ol>`;
+  $("copyRedirectBtn").addEventListener("click", () => {
+    navigator.clipboard && navigator.clipboard.writeText(s.redirect_uri);
+    $("copyRedirectBtn").textContent = "Copied";
+  });
+}
+
+$("driveConnectBtn").addEventListener("click", async () => {
+  $("driveError").textContent = "";
+  const win = window.open("", "_blank"); // open now so the browser treats it as a user action
+  try {
+    const { url } = await api("/drive/auth-url", { method: "POST" });
+    if (win) win.location = url; else window.location.href = url;
+    $("driveStatusBody").insertAdjacentHTML("beforeend",
+      `<p class="modal-hint">Finish signing in to Google in the new tab, then come back &mdash; this panel refreshes automatically.</p>`);
+  } catch (e) {
+    if (win) win.close();
+    $("driveError").textContent = e.message;
+  }
+});
+
+$("driveDisconnectBtn").addEventListener("click", async () => {
+  if (!confirm("Disconnect Google Drive? Files already in Drive stay there; new uploads will be kept on this server.")) return;
+  try {
+    const res = await api("/drive/disconnect", { method: "POST" });
+    await refreshDriveModal();
+    $("driveError").textContent = "";
+    $("driveStatusBody").insertAdjacentHTML("afterbegin", `<p class="modal-success">${escapeHtml(res.message)}</p>`);
+  } catch (e) { $("driveError").textContent = e.message; }
+});
+
+window.addEventListener("focus", () => {
+  if ($("driveModalBackdrop").classList.contains("open")) refreshDriveModal();
+});
 
 // ---------------- init ----------------
 (async function init() {
