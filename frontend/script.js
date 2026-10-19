@@ -2205,12 +2205,14 @@ async function loadProofList() {
       <li class="proof-item">
         <span class="proof-kind">${fileKind(p.file_name)}</span>
         <span class="proof-name">${escapeHtml(p.file_name)}
-          <small>${formatBytes(p.size_bytes)} &middot; ${p.storage === "drive" ? "Google Drive" : "Server"} &middot; ${escapeHtml((p.created_at || "").slice(0, 10))}</small>
+          <small>${formatBytes(p.size_bytes)} &middot; ${p.storage === "drive" ? "Google Drive" : "Server"} &middot; ${escapeHtml((p.created_at || "").slice(0, 10))}${p.original_name && p.original_name !== p.file_name ? ` &middot; uploaded as &ldquo;${escapeHtml(p.original_name)}&rdquo;` : ""}</small>
         </span>
         <button class="icon-btn" data-proof-open="${p.proof_id}" data-name="${escapeHtml(p.file_name)}">Open</button>
+        <button class="icon-btn" data-proof-dl="${p.proof_id}" data-name="${escapeHtml(p.file_name)}">Download</button>
         <button class="icon-btn danger" data-proof-del="${p.proof_id}">Delete</button>
       </li>`).join("") : `<li class="proof-empty">No proof documents attached yet.</li>`;
     ul.querySelectorAll("[data-proof-open]").forEach(btn => btn.addEventListener("click", () => openProofFile(btn.dataset.proofOpen, btn.dataset.name)));
+    ul.querySelectorAll("[data-proof-dl]").forEach(btn => btn.addEventListener("click", () => openProofFile(btn.dataset.proofDl, btn.dataset.name, true)));
     ul.querySelectorAll("[data-proof-del]").forEach(btn => btn.addEventListener("click", async () => {
       if (!confirm("Delete this proof document? (If it is in Google Drive it goes to Drive's Trash, where it can be restored for 30 days.)")) return;
       try {
@@ -2224,12 +2226,14 @@ async function loadProofList() {
   }
 }
 
-async function openProofFile(id, name) {
+async function openProofFile(id, name, forceDownload = false) {
   $("proofError").textContent = "";
-  const viewable = /\.(pdf|png|jpe?g|webp)$/i.test(name);
+  // Phones (Android Chrome in particular) cannot show a PDF in a new tab, so PDFs are saved there instead.
+  const phone = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  const viewable = !forceDownload && (phone ? /\.(png|jpe?g|webp)$/i : /\.(pdf|png|jpe?g|webp)$/i).test(name);
   const win = viewable ? window.open("", "_blank") : null; // opened now, while the click still counts, so pop-up blockers allow it
   try {
-    const res = await fetch(`${API_BASE}/proofs/${id}/file`, { headers: { Authorization: "Bearer " + authToken } });
+    const res = await fetch(`${API_BASE}/proofs/${id}/file${forceDownload ? "?download=1" : ""}`, { headers: { Authorization: "Bearer " + authToken } });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       throw new Error(d.error || "Could not open this file.");

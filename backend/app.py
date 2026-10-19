@@ -375,6 +375,7 @@ CREATE TABLE IF NOT EXISTS proof_files (
     storage      TEXT,             -- 'drive' or 'local'
     storage_ref  TEXT,             -- Drive file id, or path under backend/uploads/
     web_link     TEXT DEFAULT '',
+    original_name TEXT DEFAULT '',  -- name of the file as it was uploaded
     created_at   TEXT DEFAULT (datetime('now'))
 );
 
@@ -433,6 +434,9 @@ CREATE TABLE IF NOT EXISTS profile_layout (
 
 def migrate_db(conn):
     """Add new columns to an existing database without losing data."""
+    proof_cols = {row[1] for row in conn.execute("PRAGMA table_info(proof_files)")}
+    if proof_cols and "original_name" not in proof_cols:
+        conn.execute("ALTER TABLE proof_files ADD COLUMN original_name TEXT DEFAULT ''")
     existing = {row[1] for row in conn.execute("PRAGMA table_info(papers)")}
     if "abstract" not in existing:
         conn.execute("ALTER TABLE papers ADD COLUMN abstract TEXT DEFAULT ''")
@@ -2314,6 +2318,63 @@ def _record_owner_and_label(record_type, record_id):
     return d.get("scientist_id"), str(label)
 
 
+def _record_row(record_type, record_id):
+    target = _proof_target(record_type)
+    if not target:
+        return {}
+    table, id_col = target
+    row = get_db().execute(f"SELECT * FROM {table} WHERE {id_col} = ?", (record_id,)).fetchone()
+    return dict(row) if row else {}
+
+
+# Which fields make up a proof file's name, per section (first part = year where there is one).
+PROOF_NAME_FIELDS = {
+    "papers": ("year", "title", "journal"),
+    "awards": ("year", "title", "awarding_body"),
+    "projects": ("project_title", "funding_agency"),
+    "book-chapters": ("year", "title", "book_title"),
+    "software": ("package_name", "year"),
+    "technology": ("year", "title", "category", "id_number"),
+    "popular-articles": ("year", "title", "publication"),
+    "policy-papers": ("year", "title", "publisher"),
+    "manuals": ("year", "title", "publisher"),
+    "conference-papers": ("year", "title"),
+    "courses-taught": ("course_name",),
+    "students-guided": ("name", "student_type"),
+    "trainings-attended": ("year", "description"),
+    "trainings-organised": ("year", "description"),
+    "invited-talks": ("year", "description"),
+    "custom-entries": ("year", "title"),
+}
+_PART_LIMITS = {"title": 90, "description": 90, "project_title": 90, "journal": 50, "book_title": 50,
+                "publication": 45, "publisher": 45, "awarding_body": 45, "funding_agency": 45}
+
+
+def _proof_display_name(record_type, record, original_name, existing_count=0):
+    """'2024 - Paper title - Journal name.pdf' (adds ' (2)', ' (3)' for further files on the same record)."""
+    ext = os.path.splitext(original_name or "")[1].lower()
+    parts = []
+    for f in PROOF_NAME_FIELDS.get(record_type, ("year", "title")):
+        v = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", str(record.get(f) or ""))).strip(" .,;-")
+        if f == "journal":
+            # Stored journal text sometimes carries volume/pages/DOI - keep just the name.
+            v = re.split(r"\s*(?:,\s*\d|\(|\bvol\b|\bdoi\b|https?://|(?<=\D)\s\d)", v, maxsplit=1, flags=re.I)[0].strip(" .,;-") or v
+        v = re.sub(r"\s*[:?*|]+\s*", " ", v.replace("/", "-").replace("\\", "-"))
+        v = re.sub(r'["<>]+', "", v).strip(" .,;-")
+        if not v or v.lower() in ("none", "null", "0"):
+            continue
+        lim = _PART_LIMITS.get(f, 40)
+        if len(v) > lim:
+            v = v[:lim].rsplit(" ", 1)[0].rstrip(" .,;:-(")
+        parts.append(v)
+    if not parts:
+        return _safe_name(original_name, limit=180)
+    base = " - ".join(parts)
+    if existing_count:
+        base += f" ({existing_count + 1})"
+    return _safe_name(base, limit=170) + ext
+
+
 def _error(msg, code=400):
     return jsonify({"error": msg}), code
 
@@ -2330,7 +2391,7 @@ def list_proofs():
         return _error("Record not found.", 404)
     _enforce_scientist_scope(owner)
     rows = get_db().execute(
-        "SELECT proof_id, file_name, mime_type, size_bytes, storage, web_link, created_at FROM proof_files "
+        "SELECT proof_id, file_name, original_name, mime_type, size_bytes, storage, web_link, created_at FROM proof_files "
         "WHERE record_type = ? AND record_id = ? ORDER BY proof_id ASC", (record_type, record_id),
     ).fetchall()
     return jsonify([dict(r) for r in rows])
@@ -2369,20 +2430,23 @@ def upload_proof():
     except ValueError as e:
         return _error(str(e))
     section = RECORD_SECTION_LABELS.get(record_type, record_type.replace("-", " ").title())
-    stored_name = _safe_name(f"{label[:70]} - {name}" if label else name, limit=180)
+    already = get_db().execute("SELECT COUNT(*) FROM proof_files WHERE record_type = ? AND record_id = ?",
+                               (record_type, record_id)).fetchone()[0]
+    stored_name = _proof_display_name(record_type, _record_row(record_type, record_id), name, already)
     try:
         storage, ref, link = _store_file(owner, section, stored_name, mime, content)
     except DriveError as e:
         return _error(str(e), 502)
     db = get_db()
     cur = db.execute(
-        "INSERT INTO proof_files (scientist_id, record_type, record_id, file_name, mime_type, size_bytes, storage, storage_ref, web_link) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (owner, record_type, record_id, name, mime, len(content), storage, ref, link),
+        "INSERT INTO proof_files (scientist_id, record_type, record_id, file_name, original_name, mime_type, size_bytes, storage, storage_ref, web_link) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (owner, record_type, record_id, stored_name, name, mime, len(content), storage, ref, link),
     )
     db.commit()
     where = "Google Drive" if storage == "drive" else "this server (Google Drive not connected yet)"
-    return jsonify({"message": f"Saved to {where}.", "proof_id": cur.lastrowid, "storage": storage}), 201
+    return jsonify({"message": f"Saved to {where} as \"{stored_name}\".", "proof_id": cur.lastrowid,
+                    "storage": storage, "file_name": stored_name}), 201
 
 
 @app.route("/api/proofs/<int:proof_id>/file", methods=["GET"])
@@ -2397,7 +2461,8 @@ def download_proof(proof_id):
     except (DriveError, OSError) as e:
         return _error(f"Could not open this file: {e}", 502)
     from flask import Response
-    disposition = "inline" if (row["mime_type"] or "").startswith(("image/", "application/pdf")) else "attachment"
+    viewable = (row["mime_type"] or "").startswith(("image/", "application/pdf"))
+    disposition = "inline" if viewable and request.args.get("download") != "1" else "attachment"
     return Response(content, mimetype=row["mime_type"] or "application/octet-stream", headers={
         "Content-Disposition": f"{disposition}; filename*=UTF-8''{urllib.parse.quote(row['file_name'])}",
         "Cache-Control": "private, no-store",

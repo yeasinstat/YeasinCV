@@ -777,6 +777,12 @@ main { margin: 0 auto; padding: 0 32px 80px; }
 .proof-name { flex: 1 1 auto; min-width: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
 .proof-name small { display: block; color: var(--slate-light); font-size: 0.76rem; margin-top: 2px; }
 .proof-empty { padding: 14px 12px; color: var(--slate); font-size: 0.9rem; }
+@media (max-width: 720px) {
+  .proof-item { flex-wrap: wrap; align-items: flex-start; }
+  .proof-name { flex: 1 1 calc(100% - 50px); overflow-wrap: break-word; }
+  .proof-item .icon-btn { margin-left: auto; }
+  .proof-item .icon-btn ~ .icon-btn { margin-left: 0; }
+}
 
 /* ---------------- Gallery ---------------- */
 .gallery-grid {

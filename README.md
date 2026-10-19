@@ -49,6 +49,12 @@ publications, training, technology, custom tabs) has a **Proof** button when
 logged in. Attach PDFs, images, Word/Excel/PowerPoint files (25 MB each). The
 button shows a count, e.g. *Proof (2)*. Proofs are private: only the admin and
 that person's own login can see them.
+Proofs are optional — nothing needs one. Each file is renamed automatically
+after its record, e.g. `2024 - Paper title - Journal name.pdf` (a second file on
+the same record gets ` (2)`); the name it was uploaded with is shown underneath.
+**Open** views a PDF/image in a new tab (on phones PDFs are saved instead) and
+**Download** saves the file under its new name — this works whether the file
+is in Google Drive or on the server.
 
 **Gallery** — the last tab. Add photos with captions, hide/show, delete,
 drag to reorder, click a photo to view it full-screen. Each person has their
